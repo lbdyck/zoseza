@@ -34,7 +34,10 @@ options:
   -1, --oneline
   -D, --dsn
   --tui
-
 ```
+
+Help for --tui (via F1):
+
+<img width="864" height="723" alt="image" src="https://github.com/user-attachments/assets/32c76f40-7a20-41f9-9888-d0a60f8f7e2b" />
 
 Google Gemini was used for this project
