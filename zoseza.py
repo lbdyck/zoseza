@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
 import os
 import sys
 import stat
@@ -189,7 +190,8 @@ def format_git_badge(status):
     return f"{color}{status:<2}{COLORS['reset']}"
 
 def format_tag_badge(tag_info):
-    if not tag_info: return ""
+    if not tag_info: 
+        return " " * 13 # Pad with 13 spaces if there is no tag info
     state, codeset, _ = tag_info
     return f"{COLORS['tags']}{state} {codeset:<10}{COLORS['reset']} "
 
@@ -282,8 +284,8 @@ def format_entry(entry, st, path, rel_path, g_stats, tags, x_stats, args,
         out += f"{COLORS['tree_line']}{t_pfx}{COLORS['reset']}"
         out += f"{color}{icon}{entry}{COLORS['reset']}{sym_tgt}"
         vlen = 3 if args.git else 0
-        vlen += 13 if (args.tags and tag_badge) else 0
-        vlen += 7 if (args.extattr and x_badge) else 0
+        vlen += 13 if args.tags else 0
+        vlen += 7 if args.extattr else 0
         vlen += len(t_pfx) + (2 if args.icons else 0)
         vlen += len(entry) + tgt_vis_len
         return out, vlen
@@ -327,7 +329,10 @@ def process_directory(target_dir, args, g_stats, prefix="", r_base="", root=True
     else:
         files.sort(key=lambda x: x[0].lower(), reverse=args.reverse)
         
-    entries_with_stats = dots + files
+    if args.reverse and not args.sort_size and not args.time:
+        entries_with_stats = files + dots
+    else:
+        entries_with_stats = dots + files
 
     short_items = []
     for i, (entry, st, path) in enumerate(entries_with_stats):
@@ -542,7 +547,7 @@ def view_file(stdscr, path):
                 if query.lower() in lines[i].lower():
                     top = i; break
 
-def tui_loop(stdscr, start_dir, args):
+def tui_loop(stdscr, start_paths, args):
     curses.curs_set(0)
     stdscr.keypad(True)
     
@@ -553,7 +558,22 @@ def tui_loop(stdscr, start_dir, args):
         apply_curses_colors(config)
         sync_ansi_colors(config)
     
-    current_dir = os.path.abspath(start_dir)
+    if not start_paths:
+        start_paths = ['.']
+        
+    first_path = os.path.abspath(start_paths[0])
+    explicit_files = None
+    
+    if os.path.isdir(first_path) and len(start_paths) == 1:
+        current_dir = first_path
+    else:
+        if os.path.exists(first_path) and not os.path.isdir(first_path):
+            current_dir = os.path.dirname(first_path)
+        else:
+            current_dir = os.path.abspath('.') if os.path.isdir('.') else '/'
+        explicit_files = {os.path.basename(os.path.abspath(p)) for p in start_paths}
+        
+    initial_dir = current_dir
     prev_dir = None
     sel_idx, top_idx = 0, 0
     sort_by = 'time' if args.time else 'size' if args.sort_size else 'name'
@@ -581,7 +601,7 @@ def tui_loop(stdscr, start_dir, args):
         "  n            : Sort Name",
         "  r            : Reverse Sort",
         "  f or /       : Filter by string",
-        "  c            : Clear filter",
+        "  c            : Clear filter (and global file filter if any)",
         "",
         "Settings:",
         "  o            : Change colors/editor",
@@ -601,6 +621,9 @@ def tui_loop(stdscr, start_dir, args):
             if not args.all:
                 raw = [e for e in raw if not e.startswith('.')]
                 
+            if explicit_files and current_dir == initial_dir:
+                raw = [e for e in raw if e in explicit_files or e == '..']
+                
             g_stats = get_git_statuses_recursive(current_dir) if args.git else {}
             tags = get_zos_tags(current_dir) if args.tags else {}
             x_stats = get_extattrs(current_dir, raw) if args.extattr else {}
@@ -609,11 +632,12 @@ def tui_loop(stdscr, start_dir, args):
             
         items = []
         raw_files = []
+        dots = []
         
         if current_dir != '/':
             try: p_st = os.lstat(os.path.dirname(current_dir))
             except: p_st = None
-            if p_st: items.append(('..', p_st, os.path.dirname(current_dir)))
+            if p_st: dots.append(('..', p_st, os.path.dirname(current_dir)))
             
         for entry in raw:
             if current_filter and current_filter.lower() not in entry.lower(): continue
@@ -630,7 +654,10 @@ def tui_loop(stdscr, start_dir, args):
         else:
             raw_files.sort(key=lambda x: (x[0].lower() if not sort_rev else -ord(x[0][0])))
             
-        items.extend(raw_files)
+        if sort_rev and sort_by == 'name':
+            items = raw_files + dots
+        else:
+            items = dots + raw_files
             
         if len(items) == (1 if current_dir != '/' else 0): 
             items.append(('(No Matches)', None, ''))
@@ -641,7 +668,9 @@ def tui_loop(stdscr, start_dir, args):
         elif sel_idx >= top_idx + (h - 2): top_idx = sel_idx - (h - 3)
         
         hdr = f" Dir: {current_dir} | Sort: {sort_by.upper()}{' (Rev)' if sort_rev else ''}"
-        if current_filter: hdr += f" | Flt: '{current_filter}'"
+        if current_filter or (explicit_files and current_dir == initial_dir): 
+            f_str = current_filter if current_filter else "[Explicit Glob]"
+            hdr += f" | Flt: '{f_str}'"
         stdscr.addstr(0, 0, hdr[:w-1].ljust(w-1), curses.A_REVERSE)
         
         for i in range(h - 2):
@@ -686,7 +715,11 @@ def tui_loop(stdscr, start_dir, args):
         elif k == ord('t'): sort_by = 'time'
         elif k == ord('n'): sort_by = 'name'
         elif k == ord('r'): sort_rev = not sort_rev
-        elif k == ord('c'): current_filter = ""
+        elif k == ord('c'): 
+            current_filter = ""
+            if explicit_files:
+                explicit_files = None
+                prev_dir = None
         elif k == ord('f') or k == ord('/'):
             current_filter = get_input(stdscr, h-1, w, " Filter: ")
         elif k == ord('D'):
@@ -782,8 +815,7 @@ def main():
     args = parser.parse_args()
     
     if args.tui:
-        start_path = args.paths[0] if args.paths else '.'
-        curses.wrapper(tui_loop, start_path, args)
+        curses.wrapper(tui_loop, args.paths, args)
         return
     
     if args.ext:
@@ -800,30 +832,20 @@ def main():
         
     all_json_data = []
 
-    for i, path in enumerate(args.paths):
-        path_dict = {"target": path, "contents": []}
-        is_dir = os.path.isdir(path) and not args.directory
-        
-        if is_dir and (len(args.paths) > 1 or args.git or args.tree or args.dsn):
-            header = f"{path}"
-            if args.dsn:
-                dsn = get_zfs_dsn(path)
-                if dsn:
-                    h_fmt = f"{COLORS['dsn']}[{dsn}]{COLORS['reset']}"
-                    header += f" {h_fmt}"
-                    path_dict["zfs_dataset"] = dsn
-            if args.git:
-                branch = get_git_branch(path)
-                if branch:
-                    b_fmt = f"{COLORS['branch']} {branch}{COLORS['reset']}"
-                    header += f" on {b_fmt}"
-                    path_dict["git_branch"] = branch
-            print(f"{header}:")
-        
-        if is_dir:
-            g_stats = get_git_statuses_recursive(path) if args.git else {}
-            path_dict["contents"] = process_directory(path, args, g_stats)
+    file_paths = []
+    dir_paths = []
+    
+    for p in args.paths:
+        if os.path.isdir(p) and not args.directory:
+            dir_paths.append(p)
         else:
+            file_paths.append(p)
+
+    if file_paths:
+        short_items = []
+        path_dict = {"target": "files", "contents": []}
+        
+        for path in file_paths:
             try:
                 st = os.lstat(path)
                 t_stat, x_stat = {}, {}
@@ -843,24 +865,58 @@ def main():
                         if len(parts) >= 5: x_stat[path] = parts[:4]
                     except Exception: pass
                 
-                fmt_str, _ = format_entry(
+                fmt_str, vlen = format_entry(
                     path, st, path, path, {}, t_stat, x_stat, args
                 )
                 dsn_val = None
                 if args.dsn:
                     dsn_val = get_zfs_dsn(path)
-                    if dsn_val: fmt_str += f"  {COLORS['dsn']}[{dsn_val}]{COLORS['reset']}"
+                    if dsn_val: 
+                        fmt_str += f"  {COLORS['dsn']}[{dsn_val}]{COLORS['reset']}"
+                        vlen += 4 + len(dsn_val)
                 
-                print(fmt_str)
+                if args.long or args.tree or args.oneline:
+                    print(fmt_str)
+                else:
+                    short_items.append((fmt_str, vlen))
                 
                 p_dict = build_dict(path, st, path, path, {}, t_stat, x_stat, args)
                 if dsn_val: p_dict["zfs_dataset"] = dsn_val
                 path_dict["contents"].append(p_dict)
             except OSError:
                 print(f"pyeza: cannot access '{path}'", file=sys.stderr)
+                
+        if not (args.long or args.tree or args.oneline):
+            print_grid(short_items)
+            
+        all_json_data.append(path_dict)
+        if dir_paths:
+            print()
+
+    for i, path in enumerate(dir_paths):
+        path_dict = {"target": path, "contents": []}
+        
+        if len(args.paths) > 1 or args.git or args.tree or args.dsn:
+            header = f"{path}"
+            if args.dsn:
+                dsn = get_zfs_dsn(path)
+                if dsn:
+                    h_fmt = f"{COLORS['dsn']}[{dsn}]{COLORS['reset']}"
+                    header += f" {h_fmt}"
+                    path_dict["zfs_dataset"] = dsn
+            if args.git:
+                branch = get_git_branch(path)
+                if branch:
+                    b_fmt = f"{COLORS['branch']} {branch}{COLORS['reset']}"
+                    header += f" on {b_fmt}"
+                    path_dict["git_branch"] = branch
+            print(f"{header}:")
+        
+        g_stats = get_git_statuses_recursive(path) if args.git else {}
+        path_dict["contents"] = process_directory(path, args, g_stats)
         
         all_json_data.append(path_dict)
-        if i < len(args.paths) - 1: print()
+        if i < len(dir_paths) - 1: print()
             
     if args.json:
         try:
