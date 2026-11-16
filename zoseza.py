@@ -11,6 +11,8 @@ import re
 import curses
 from datetime import datetime
 
+CMD_NAME = os.path.basename(sys.argv[0])
+
 # ANSI Color Codes
 COLORS = {
     'reset': '\033[0m', 'dir': '\033[1;34m', 'exe': '\033[1;32m',       
@@ -191,7 +193,7 @@ def format_git_badge(status):
 
 def format_tag_badge(tag_info):
     if not tag_info: 
-        return " " * 13 # Pad with 13 spaces if there is no tag info
+        return " " * 13
     state, codeset, _ = tag_info
     return f"{COLORS['tags']}{state} {codeset:<10}{COLORS['reset']} "
 
@@ -294,7 +296,7 @@ def process_directory(target_dir, args, g_stats, prefix="", r_base="", root=True
     contents = []
     try: raw_entries = os.listdir(target_dir)
     except PermissionError:
-        print(f"{prefix}pyeza: permission denied '{target_dir}'", file=sys.stderr)
+        print(f"{prefix}{CMD_NAME}: permission denied '{target_dir}'", file=sys.stderr)
         return contents
 
     if not args.all:
@@ -419,7 +421,7 @@ def settings_menu(stdscr, config):
         "UP/DOWN       : Move selection",
         "LEFT/RIGHT    : Cycle through available colors",
         "ENTER         : Edit the text value (Editor)",
-        "s             : Save configuration to ~/.pyeza.json and exit",
+        "s             : Save config to ~/.pyeza.json and exit",
         "ESC           : Go back to directory browser without saving",
         "q             : Quit menu without saving"
     ]
@@ -428,7 +430,7 @@ def settings_menu(stdscr, config):
         h, w = stdscr.getmaxyx()
         stdscr.clear()
         
-        hdr = " pyeza Settings | UP/DN: Sel | L/R: Color | s: Save | F1: Help | q: Quit "
+        hdr = f" {CMD_NAME} Settings | UP/DN: Sel | L/R: Color | s: Save | F1: Help | q: Quit "
         stdscr.addstr(0, 0, hdr.ljust(w-1)[:w-1], curses.A_REVERSE)
         
         for i, opt in enumerate(opts):
@@ -791,7 +793,7 @@ def main():
     sync_ansi_colors(cfg)
     apply_ls_colors() 
     
-    parser = argparse.ArgumentParser(description="Python eza clone for z/OS")
+    parser = argparse.ArgumentParser(description="Python eza clone for z/OS (TUI Config saved to ~/.pyeza.json)")
     parser.add_argument('paths', nargs='*', default=['.'])
     parser.add_argument('-a', '--all', action='store_true')
     parser.add_argument('-l', '--long', action='store_true')
@@ -826,7 +828,7 @@ def main():
     if args.regex:
         try: args.regex_pattern = re.compile(args.regex)
         except re.error as e:
-            print(f"pyeza: invalid regex - {e}", file=sys.stderr)
+            print(f"{CMD_NAME}: invalid regex - {e}", file=sys.stderr)
             sys.exit(1)
     else: args.regex_pattern = None
         
@@ -884,7 +886,7 @@ def main():
                 if dsn_val: p_dict["zfs_dataset"] = dsn_val
                 path_dict["contents"].append(p_dict)
             except OSError:
-                print(f"pyeza: cannot access '{path}'", file=sys.stderr)
+                print(f"{CMD_NAME}: cannot access '{path}'", file=sys.stderr)
                 
         if not (args.long or args.tree or args.oneline):
             print_grid(short_items)
@@ -923,7 +925,7 @@ def main():
             with open(args.json, 'w') as f: json.dump(all_json_data, f, indent=2)
             print(f"\n[+] Exported directory data to {args.json}")
         except Exception as e:
-            print(f"pyeza: Failed to write JSON - {e}", file=sys.stderr)
+            print(f"{CMD_NAME}: Failed to write JSON - {e}", file=sys.stderr)
 
 if __name__ == '__main__':
     main()
