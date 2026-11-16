@@ -191,6 +191,16 @@ def get_acls(target_dir):
     except Exception: pass
     return acls
 
+def get_git_branch(target_dir):
+    try:
+        res = subprocess.run(['git', 'branch', '--show-current'],
+                             cwd=target_dir, stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL, text=True)
+        if res.returncode == 0 and res.stdout.strip():
+            return res.stdout.strip()
+    except Exception: pass
+    return None
+
 def get_git_statuses_recursive(target_dir):
     statuses = {}
     try:
