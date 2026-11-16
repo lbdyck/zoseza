@@ -40,4 +40,8 @@ Help for --tui (via F1):
 
 <img width="864" height="723" alt="image" src="https://github.com/user-attachments/assets/32c76f40-7a20-41f9-9888-d0a60f8f7e2b" />
 
+When `F`` is used in the `o` (settings:
+
+<img width="862" height="238" alt="image" src="https://github.com/user-attachments/assets/64c3a501-f834-4800-a3dd-752ac279a235" />
+
 Google Gemini was used for this project
