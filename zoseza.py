@@ -1,56 +1,5 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-"""
-zeza.py (Python eza clone for z/OS)
-
-Description:
-  A feature-rich Python clone of the `eza` (modern ls) utility specifically tailored 
-  for IBM z/OS UNIX System Services (USS). It provides robust colorized terminal output, 
-  native EBCDIC/ASCII tag support (chtag), extended attribute inspection (extattr), 
-  zFS dataset resolution, and Git status integration. 
-
-  It features both a standard CLI format and an interactive full-screen Text User Interface 
-  (TUI) for navigating, sorting, filtering, editing, and managing files on the mainframe.
-
-CLI Options:
-  paths                 Files or directories to list (default: current directory).
-  -a, --all             Show hidden files (starting with .).
-  -l, --long            Display extended metadata (perms, links, owner, group, size, time).
-  -g, --git             Show Git status badges and the current branch.
-  -t, --time            Sort by modification time (newest first).
-  -i, --icons           Display Nerd Font icons next to filenames.
-  -b, --blocks          Display file sizes in 512-byte blocks instead of bytes.
-  -J, --json FILE       Export directory listing data to a specified JSON file.
-  -e, --ext EXT         Filter by comma-separated file extensions (e.g., txt,rex,c).
-  -R, --regex PATTERN   Filter files matching a regular expression.
-  -T, --tags            Display z/OS file tags (state, codeset).
-  -x, --extattr         Display z/OS extended attributes (APF, program control, etc.).
-  --tree                Display output in a recursive tree topology.
-  -d, --directory       List directories themselves, not their contents.
-  -S, --sort-size       Sort files by size (largest first).
-  -r, --reverse         Reverse the current sort order.
-  -1, --oneline         Display one entry per line.
-  -D, --dsn             Show underlying zFS dataset names for directories and symlinks.
-  --tui                 Launch the interactive fullscreen Text User Interface.
-
-TUI Hotkeys:
-  UP/DOWN : Navigate              s/t/n/r : Sort (Size/Time/Name/Reverse)
-  ENTER   : Open Dir/File         f or /  : Filter by string
-  ESC     : Go up one dir         c       : Clear filter
-  e       : Edit file             o       : Open settings (colors/editor)
-  D/R/C   : Delete/Rename/Copy    F1      : Show help tutorial
-  q       : Quit
-
-Change History:
-  2026-11-16: Added dynamic column headers (CLI/TUI) and TUI horizontal separator.
-  2026-11-16: Added TUI support for shell globbing (e.g., zeza.py --tui z*).
-  2026-11-16: Removed '.' from lists; explicitly pinned '..' to the top of all sorts.
-  2026-11-16: Fixed column alignment drift for tagless directories.
-  2026-11-16: Added universal F1 Help overlays; added MIT License SPDX identifier.
-  2026-11-16: Added interactive file ops (D/R/C) and TUI settings (~/.pyeza.json).
-  2026-11-15: Initial TUI integration with colorized views and basic navigation.
-  2026-11-14: Initial CLI layout, z/OS specific integrations, and sorting capabilities.
-"""
 import os
 import sys
 import stat
@@ -223,14 +172,27 @@ def get_extattrs(target_dir, files):
     except Exception: pass
     return attrs
 
+_ZFS_DSN_CACHE = {}
 def get_zfs_dsn(target_path):
+    """Retrieves the zFS dataset name, intelligently caching by parent mount point to avoid df spam."""
     try:
-        res = subprocess.run(['df', '-P', target_path], stdout=subprocess.PIPE, 
+        st = os.lstat(target_path)
+        if stat.S_ISDIR(st.st_mode):
+            cache_key = os.path.abspath(target_path)
+        else:
+            cache_key = os.path.dirname(os.path.abspath(target_path))
+            
+        if cache_key in _ZFS_DSN_CACHE:
+            return _ZFS_DSN_CACHE[cache_key]
+            
+        res = subprocess.run(['df', '-P', cache_key], stdout=subprocess.PIPE, 
                              stderr=subprocess.DEVNULL, text=True)
         lines = res.stdout.splitlines()
         if len(lines) >= 2:
             parts = lines[1].split()
-            if len(parts) >= 1: return parts[0]
+            if len(parts) >= 1: 
+                _ZFS_DSN_CACHE[cache_key] = parts[0]
+                return parts[0]
     except Exception: pass
     return None
 
@@ -269,6 +231,7 @@ def get_header_str(args, force_long=False):
     icon_pad = "  " if args.icons else ""
     out += f"{icon_pad}Name"
     
+    if args.dsn: out += "  [Dataset]"
     return out
 
 def print_grid(items):
@@ -314,6 +277,10 @@ def build_dict(entry, st, path, rel_path, g_stats, tags, x_stats, args):
             "shared_address_space": x_info[2] == 's', 
             "shared_library": x_info[3] == 'l'
         }
+    if args.dsn:
+        dsn_val = get_zfs_dsn(path)
+        if dsn_val: data["zfs_dataset"] = dsn_val
+        
     return data
 
 def format_entry(entry, st, path, rel_path, g_stats, tags, x_stats, args, 
@@ -332,8 +299,14 @@ def format_entry(entry, st, path, rel_path, g_stats, tags, x_stats, args,
             target = os.readlink(path)
             t_col = COLORS['dsn'] if target.startswith('//') else COLORS['symlink']
             sym_tgt = f"  {t_col}{target}{COLORS['reset']}"
-            tgt_vis_len = 3 + len(target)
+            tgt_vis_len += 3 + len(target)
         except OSError: pass
+
+    if args.dsn:
+        dsn_val = get_zfs_dsn(path)
+        if dsn_val:
+            sym_tgt += f"  {COLORS['dsn']}[{dsn_val}]{COLORS['reset']}"
+            tgt_vis_len += 4 + len(dsn_val)
     
     if args.long or force_long:
         perms = stat.filemode(st.st_mode)
@@ -740,7 +713,12 @@ def tui_loop(stdscr, start_paths, args):
         if sel_idx < top_idx: top_idx = sel_idx
         elif sel_idx >= top_idx + list_h: top_idx = sel_idx - (list_h - 1)
         
-        hdr = f" Dir: {current_dir} | Sort: {sort_by.upper()}{' (Rev)' if sort_rev else ''}"
+        hdr = f" Dir: {current_dir}"
+        if args.dsn:
+            c_dsn = get_zfs_dsn(current_dir)
+            if c_dsn: hdr += f" [{c_dsn}]"
+        
+        hdr += f" | Sort: {sort_by.upper()}{' (Rev)' if sort_rev else ''}"
         if current_filter or (explicit_files and current_dir == initial_dir): 
             f_str = current_filter if current_filter else "[Explicit Glob]"
             hdr += f" | Flt: '{f_str}'"
@@ -748,7 +726,6 @@ def tui_loop(stdscr, start_paths, args):
         
         col_hdr = get_header_str(args, force_long=True)
         stdscr.addstr(1, 0, col_hdr[:w-1].ljust(w-1), curses.A_BOLD)
-        
         stdscr.addstr(2, 0, "─" * (w-1), curses.A_NORMAL)
         
         for i in range(list_h):
@@ -887,7 +864,7 @@ def main():
     parser.add_argument('-S', '--sort-size', action='store_true')
     parser.add_argument('-r', '--reverse', action='store_true')
     parser.add_argument('-1', '--oneline', action='store_true')
-    parser.add_argument('-D', '--dsn', action='store_true')
+    parser.add_argument('-D', '--dsn', action='store_true', help="Show underlying zFS dataset names")
     parser.add_argument('--tui', action='store_true')
     
     args = parser.parse_args()
@@ -950,12 +927,6 @@ def main():
                 fmt_str, vlen = format_entry(
                     path, st, path, path, {}, t_stat, x_stat, args
                 )
-                dsn_val = None
-                if args.dsn:
-                    dsn_val = get_zfs_dsn(path)
-                    if dsn_val: 
-                        fmt_str += f"  {COLORS['dsn']}[{dsn_val}]{COLORS['reset']}"
-                        vlen += 4 + len(dsn_val)
                 
                 if args.long or args.tree or args.oneline:
                     print(fmt_str)
@@ -963,7 +934,6 @@ def main():
                     short_items.append((fmt_str, vlen))
                 
                 p_dict = build_dict(path, st, path, path, {}, t_stat, x_stat, args)
-                if dsn_val: p_dict["zfs_dataset"] = dsn_val
                 path_dict["contents"].append(p_dict)
             except OSError:
                 print(f"{CMD_NAME}: cannot access '{path}'", file=sys.stderr)
