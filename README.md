@@ -9,34 +9,6 @@ It provides robust colorized terminal output, native EBCDIC/ASCII tag support (c
 
 It features both a standard CLI format and an interactive full-screen Text User Interface (TUI) for navigating, sorting, filtering, editing, and managing files on the mainframe.
 
-## Installation
-
-The repository includes an install.sh script that automatically copies the executable and the manual page to the correct directories.
-
-### 1. System-Wide Installation (Requires elevated privileges)
-This will install the script to /usr/local/bin and the manpage to /usr/local/man/man1.
-git clone github_com/lbdyck/zoseza.git
-cd zoseza
-chmod +x install.sh
-./install.sh
-
-### 2. Personal Installation (No special privileges required)
-To install the tool into your personal home directory (~/bin and ~/man/man1), override the installation prefix:
-git clone github_com/lbdyck/zoseza.git
-cd zoseza
-chmod +x install.sh
-PREFIX=$HOME ./install.sh
-
-### 3. Update Your Environment
-Ensure your shell knows where to find the installed executable and manpage. Add the following to your ~/.profile, ~/.bashrc, or ~/.zshrc:
-# If installed system-wide:
-export PATH="/usr/local/bin:$PATH"
-export MANPATH="/usr/local/man:$MANPATH"
-
-# If installed personally:
-export PATH="$HOME/bin:$PATH"
-export MANPATH="$HOME/man:$MANPATH"
-
 ## CLI Options
 
 | Flag | Description |
