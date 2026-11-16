@@ -42,6 +42,7 @@ TUI Hotkeys:
   q       : Quit
 
 Change History:
+  2026-11-16: Added clean KeyboardInterrupt exit to suppress Ctrl+C tracebacks.
   2026-11-16: Fixed -D (dataset) display for files and implemented zFS mount point caching.
   2026-11-16: Added dynamic column headers (CLI/TUI) and TUI horizontal separator.
   2026-11-16: Added TUI support for shell globbing (e.g., zeza.py --tui z*).
@@ -1034,4 +1035,7 @@ def main():
             print(f"{CMD_NAME}: Failed to write JSON - {e}", file=sys.stderr)
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.exit(130) # Standard UNIX exit code for abort via Ctrl+C
