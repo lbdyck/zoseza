@@ -1,5 +1,56 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
+"""
+zeza.py (Python eza clone for z/OS)
+
+Description:
+  A feature-rich Python clone of the `eza` (modern ls) utility specifically tailored 
+  for IBM z/OS UNIX System Services (USS). It provides robust colorized terminal output, 
+  native EBCDIC/ASCII tag support (chtag), extended attribute inspection (extattr), 
+  zFS dataset resolution, and Git status integration. 
+
+  It features both a standard CLI format and an interactive full-screen Text User Interface 
+  (TUI) for navigating, sorting, filtering, editing, and managing files on the mainframe.
+
+CLI Options:
+  paths                 Files or directories to list (default: current directory).
+  -a, --all             Show hidden files (starting with .).
+  -l, --long            Display extended metadata (perms, links, owner, group, size, time).
+  -g, --git             Show Git status badges and the current branch.
+  -t, --time            Sort by modification time (newest first).
+  -i, --icons           Display Nerd Font icons next to filenames.
+  -b, --blocks          Display file sizes in 512-byte blocks instead of bytes.
+  -J, --json FILE       Export directory listing data to a specified JSON file.
+  -e, --ext EXT         Filter by comma-separated file extensions (e.g., txt,rex,c).
+  -R, --regex PATTERN   Filter files matching a regular expression.
+  -T, --tags            Display z/OS file tags (state, codeset).
+  -x, --extattr         Display z/OS extended attributes (APF, program control, etc.).
+  --tree                Display output in a recursive tree topology.
+  -d, --directory       List directories themselves, not their contents.
+  -S, --sort-size       Sort files by size (largest first).
+  -r, --reverse         Reverse the current sort order.
+  -1, --oneline         Display one entry per line.
+  -D, --dsn             Show underlying zFS dataset names for directories and symlinks.
+  --tui                 Launch the interactive fullscreen Text User Interface.
+
+TUI Hotkeys:
+  UP/DOWN : Navigate              s/t/n/r : Sort (Size/Time/Name/Reverse)
+  ENTER   : Open Dir/File         f or /  : Filter by string
+  ESC     : Go up one dir         c       : Clear filter
+  e       : Edit file             o       : Open settings (colors/editor)
+  D/R/C   : Delete/Rename/Copy    F1      : Show help tutorial
+  q       : Quit
+
+Change History:
+  2026-11-16: Added dynamic column headers (CLI/TUI) and TUI horizontal separator.
+  2026-11-16: Added TUI support for shell globbing (e.g., zeza.py --tui z*).
+  2026-11-16: Removed '.' from lists; explicitly pinned '..' to the top of all sorts.
+  2026-11-16: Fixed column alignment drift for tagless directories.
+  2026-11-16: Added universal F1 Help overlays; added MIT License SPDX identifier.
+  2026-11-16: Added interactive file ops (D/R/C) and TUI settings (~/.pyeza.json).
+  2026-11-15: Initial TUI integration with colorized views and basic navigation.
+  2026-11-14: Initial CLI layout, z/OS specific integrations, and sorting capabilities.
+"""
 import os
 import sys
 import stat
@@ -200,6 +251,25 @@ def format_tag_badge(tag_info):
 def format_extattr_badge(ext_info):
     if not ext_info: return f"{COLORS['extattr']}[----]{COLORS['reset']} "
     return f"{COLORS['extattr']}[{''.join(ext_info[:4])}]{COLORS['reset']} "
+
+def get_header_str(args, force_long=False):
+    out = ""
+    if args.long or force_long:
+        out += f"{'Permissions':<10} "
+        out += f"{'Ln':>2} "
+        out += f"{'User':<8} "
+        out += f"{'Group':<8} "
+        out += f"{'Size':>5} "
+        out += f"{'Modified':<12} "
+    
+    if args.git: out += f"{'Git':<3}"
+    if args.tags: out += f"{'Tag Info':<13}"
+    if args.extattr: out += f"{'ExtAttr':<7}"
+    
+    icon_pad = "  " if args.icons else ""
+    out += f"{icon_pad}Name"
+    
+    return out
 
 def print_grid(items):
     if not items: return
@@ -666,8 +736,9 @@ def tui_loop(stdscr, start_paths, args):
             
         sel_idx = max(0, min(sel_idx, len(items) - 1))
         
+        list_h = h - 4
         if sel_idx < top_idx: top_idx = sel_idx
-        elif sel_idx >= top_idx + (h - 2): top_idx = sel_idx - (h - 3)
+        elif sel_idx >= top_idx + list_h: top_idx = sel_idx - (list_h - 1)
         
         hdr = f" Dir: {current_dir} | Sort: {sort_by.upper()}{' (Rev)' if sort_rev else ''}"
         if current_filter or (explicit_files and current_dir == initial_dir): 
@@ -675,17 +746,22 @@ def tui_loop(stdscr, start_paths, args):
             hdr += f" | Flt: '{f_str}'"
         stdscr.addstr(0, 0, hdr[:w-1].ljust(w-1), curses.A_REVERSE)
         
-        for i in range(h - 2):
+        col_hdr = get_header_str(args, force_long=True)
+        stdscr.addstr(1, 0, col_hdr[:w-1].ljust(w-1), curses.A_BOLD)
+        
+        stdscr.addstr(2, 0, "─" * (w-1), curses.A_NORMAL)
+        
+        for i in range(list_h):
             if top_idx + i < len(items):
                 entry, st, path = items[top_idx + i]
                 if not st: 
-                    stdscr.addstr(i + 1, 0, entry, curses.A_NORMAL)
+                    stdscr.addstr(i + 3, 0, entry, curses.A_NORMAL)
                     continue
                     
                 ansi_str, _ = format_entry(
                     entry, st, path, entry, g_stats, tags, x_stats, args, force_long=True
                 )
-                addstr_ansi(stdscr, i + 1, 0, ansi_str, (top_idx + i == sel_idx), w)
+                addstr_ansi(stdscr, i + 3, 0, ansi_str, (top_idx + i == sel_idx), w)
                 
         ftr = " q:Quit o:Opt e:Edt D,R,C:Ops s,t,n,r:Srt f,c:Flt F1:Help "
         stdscr.addstr(h - 1, 0, ftr.ljust(w-1)[:w-1], curses.A_REVERSE)
@@ -847,6 +923,10 @@ def main():
         short_items = []
         path_dict = {"target": "files", "contents": []}
         
+        if args.long or args.tree or args.oneline:
+            hdr_str = get_header_str(args)
+            print(f"\033[1;4m{hdr_str}\033[0m")
+        
         for path in file_paths:
             try:
                 st = os.lstat(path)
@@ -914,6 +994,10 @@ def main():
                     path_dict["git_branch"] = branch
             print(f"{header}:")
         
+        if args.long or args.tree or args.oneline:
+            hdr_str = get_header_str(args)
+            print(f"\033[1;4m{hdr_str}\033[0m")
+            
         g_stats = get_git_statuses_recursive(path) if args.git else {}
         path_dict["contents"] = process_directory(path, args, g_stats)
         
