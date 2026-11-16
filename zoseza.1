@@ -15,7 +15,7 @@ It features both a standard CLI format and an interactive full-screen Text User 
 Show hidden files (starting with .).
 .TP
 \fB\-l, \-\-long\fR
-Display extended metadata (permissions, links, owner, group, size, time).
+Display extended metadata (permissions, links, owner, group, size, time). Automatically detects and displays ACLs (+) if present.
 .TP
 \fB\-g, \-\-git\fR
 Show Git status badges and the current repository branch.
@@ -23,8 +23,23 @@ Show Git status badges and the current repository branch.
 \fB\-t, \-\-time\fR
 Sort by modification time (newest first).
 .TP
+\fB\-u, \-\-access\fR
+Sort and display by last access time (atime).
+.TP
+\fB\-c, \-\-ctime\fR
+Sort and display by status change time (ctime).
+.TP
 \fB\-i, \-\-icons\fR
 Display Nerd Font icons next to filenames.
+.TP
+\fB\-\-inode\fR
+Display the file serial number (inode) next to each entry.
+.TP
+\fB\-O, \-\-octal\fR
+Display file permissions in octal format alongside the standard permission string.
+.TP
+\fB\-n, \-\-numeric\fR
+List numeric UIDs and GIDs instead of parsing user and group names.
 .TP
 \fB\-b, \-\-blocks\fR
 Display file sizes in 512-byte blocks instead of standard bytes.
@@ -79,11 +94,23 @@ UP/DOWN (Move cursor), ENTER (Open Directory/File), ESC (Go up one directory).
 .B C
 (Copy).
 .TP
+\fBView Toggles\fR
+.B I
+(Toggle Inodes),
+.B O
+(Toggle Octal Permissions),
+.B N
+(Toggle Numeric UIDs/GIDs).
+.TP
 \fBSorting & Filtering\fR
 .B s
 (Size),
 .B t
-(Time),
+(MTime),
+.B a
+(ATime),
+.B C
+(CTime),
 .B n
 (Name),
 .B r

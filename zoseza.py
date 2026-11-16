@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
 """
-zeza.py (Python eza clone for z/OS)
+zoseza.py (Python eza clone for z/OS)
 
 Description:
   A feature-rich Python clone of the `eza` (modern ls) utility specifically tailored 
@@ -18,7 +18,12 @@ CLI Options:
   -l, --long            Display extended metadata (perms, links, owner, group, size, time).
   -g, --git             Show Git status badges and the current branch.
   -t, --time            Sort by modification time (newest first).
+  -u, --access          Sort/display by last access time (atime).
+  -c, --ctime           Sort/display by status change time (ctime).
   -i, --icons           Display Nerd Font icons next to filenames.
+  --inode               Display the file serial number (inode).
+  -O, --octal           Display file permissions in octal format.
+  -n, --numeric         List numeric UIDs and GIDs instead of names.
   -b, --blocks          Display file sizes in 512-byte blocks instead of bytes.
   -J, --json FILE       Export directory listing data to a specified JSON file.
   -e, --ext EXT         Filter by comma-separated file extensions (e.g., txt,rex,c).
@@ -34,22 +39,24 @@ CLI Options:
   --tui                 Launch the interactive fullscreen Text User Interface.
 
 TUI Hotkeys:
-  UP/DOWN : Navigate              s/t/n/r : Sort (Size/Time/Name/Reverse)
-  ENTER   : Open Dir/File         f or /  : Filter by string
-  ESC     : Go up one dir         c       : Clear filter
-  e       : Edit file             o       : Open settings (colors/editor)
-  D/R/C   : Delete/Rename/Copy    F1      : Show help tutorial
-  q       : Quit
+  UP/DOWN : Navigate              s/t/a/C : Sort (Size/MTime/ATime/CTime)
+  ENTER   : Open Dir/File         n/r     : Sort (Name/Reverse)
+  ESC     : Go up one dir         f or /  : Filter by string
+  e       : Edit file             c       : Clear filter
+  D/R/C   : Delete/Rename/Copy    I/O/N   : Toggle Inode/Octal/Numeric IDs
+  q       : Quit                  F1      : Show help tutorial
+  o       : Open settings
 
 Change History:
+  2026-11-16: Added standard UNIX ls extensions: --inode, -O (octal), -n (numeric IDs).
+  2026-11-16: Added alternate timestamp sorting: -u (access time) and -c (change time).
+  2026-11-16: Implemented dynamic ACL (+) detection by parsing background ls output.
+  2026-11-16: Added TUI runtime toggles for Inode (I), Octal (O), and Numeric (N) views.
   2026-11-16: Added clean KeyboardInterrupt exit to suppress Ctrl+C tracebacks.
   2026-11-16: Fixed -D (dataset) display for files and implemented zFS mount point caching.
   2026-11-16: Added dynamic column headers (CLI/TUI) and TUI horizontal separator.
-  2026-11-16: Added TUI support for shell globbing (e.g., zeza.py --tui z*).
+  2026-11-16: Added TUI support for shell globbing (e.g., zoseza --tui z*).
   2026-11-16: Removed '.' from lists; explicitly pinned '..' to the top of all sorts.
-  2026-11-16: Fixed column alignment drift for tagless directories.
-  2026-11-16: Added universal F1 Help overlays; added MIT License SPDX identifier.
-  2026-11-16: Added interactive file ops (D/R/C) and TUI settings (~/.pyeza.json).
   2026-11-15: Initial TUI integration with colorized views and basic navigation.
   2026-11-14: Initial CLI layout, z/OS specific integrations, and sorting capabilities.
 """
@@ -74,7 +81,7 @@ COLORS = {
     'group': '\033[33m', 'git_clean': '\033[90m', 'git_mod': '\033[33m',     
     'git_add': '\033[32m', 'git_untracked': '\033[31m',
     'branch': '\033[36m', 'tree_line': '\033[90m', 'tags': '\033[35m',
-    'dsn': '\033[1;35m', 'extattr': '\033[1;31m'
+    'dsn': '\033[1;35m', 'extattr': '\033[1;31m', 'inode': '\033[90m'
 }
 
 ICONS = {
@@ -138,7 +145,8 @@ def get_icon(filename, mode):
     ext = filename.split('.')[-1].lower() if '.' in filename else ''
     return ICONS.get(ext, ICONS['default'])
 
-def get_owner_name(uid, gid):
+def get_owner_name(uid, gid, numeric=False):
+    if numeric: return str(uid), str(gid)
     try:
         import pwd
         user = pwd.getpwuid(uid).pw_name
@@ -167,15 +175,21 @@ def get_color(mode):
         return COLORS['exe']
     return COLORS['file']
 
-def get_git_branch(target_dir):
+def get_acls(target_dir):
+    acls = {}
     try:
-        res = subprocess.run(['git', 'branch', '--show-current'],
-                             cwd=target_dir, stdout=subprocess.PIPE,
-                             stderr=subprocess.DEVNULL, text=True)
-        if res.returncode == 0 and res.stdout.strip():
-            return res.stdout.strip()
+        res = subprocess.run(['ls', '-A', '-l'], cwd=target_dir, 
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        for line in res.stdout.splitlines():
+            if len(line) > 10 and line[0] in ('-', 'd', 'l', 'c', 'b', 'p', 's'):
+                parts = line.split(None, 8)
+                if len(parts) >= 9:
+                    perms = parts[0]
+                    name = parts[8].split(' -> ')[0]
+                    if perms.endswith('+'):
+                        acls[name] = True
     except Exception: pass
-    return None
+    return acls
 
 def get_git_statuses_recursive(target_dir):
     statuses = {}
@@ -227,7 +241,6 @@ def get_extattrs(target_dir, files):
 
 _ZFS_DSN_CACHE = {}
 def get_zfs_dsn(target_path):
-    """Retrieves the zFS dataset name, intelligently caching by parent mount point to avoid df spam."""
     try:
         st = os.lstat(target_path)
         if stat.S_ISDIR(st.st_mode):
@@ -258,8 +271,7 @@ def format_git_badge(status):
     return f"{color}{status:<2}{COLORS['reset']}"
 
 def format_tag_badge(tag_info):
-    if not tag_info: 
-        return " " * 13
+    if not tag_info: return " " * 13
     state, codeset, _ = tag_info
     return f"{COLORS['tags']}{state} {codeset:<10}{COLORS['reset']} "
 
@@ -269,13 +281,18 @@ def format_extattr_badge(ext_info):
 
 def get_header_str(args, force_long=False):
     out = ""
+    if args.inode:
+        out += f"{'Inode':<10} "
     if args.long or force_long:
-        out += f"{'Permissions':<10} "
+        if args.octal: out += f"{'Octal':<5} "
+        out += f"{'Permissions':<11} "
         out += f"{'Ln':>2} "
         out += f"{'User':<8} "
         out += f"{'Group':<8} "
         out += f"{'Size':>5} "
-        out += f"{'Modified':<12} "
+        
+        time_lbl = "Accessed" if args.access else "Changed" if args.ctime else "Modified"
+        out += f"{time_lbl:<12} "
     
     if args.git: out += f"{'Git':<3}"
     if args.tags: out += f"{'Tag Info':<13}"
@@ -303,26 +320,34 @@ def print_grid(items):
                 print(f"{ansi_str}{padding}", end="")
         print()
 
-def build_dict(entry, st, path, rel_path, g_stats, tags, x_stats, args):
+def build_dict(entry, st, path, rel_path, g_stats, tags, x_stats, acls, args):
     size = int(st.st_blocks * 512) if (
         args.blocks and hasattr(st, 'st_blocks')) else int(st.st_size)
-    user, group = get_owner_name(st.st_uid, st.st_gid)
+    user, group = get_owner_name(st.st_uid, st.st_gid, args.numeric)
+    
+    time_val = st.st_atime if args.access else st.st_ctime if args.ctime else st.st_mtime
+        
     data = {
         "name": entry, "path": rel_path, "size_bytes": size,
-        "permissions": stat.filemode(st.st_mode), "links": st.st_nlink,
-        "owner": user, "group": group, "mtime": st.st_mtime
+        "inode": st.st_ino, "permissions": stat.filemode(st.st_mode),
+        "octal_perms": oct(st.st_mode)[-4:], "has_acl": acls.get(entry, False),
+        "links": st.st_nlink, "owner": user, "group": group, "timestamp": time_val
     }
+    
     if stat.S_ISDIR(st.st_mode): data["type"] = "dir"
     elif stat.S_ISLNK(st.st_mode): 
         data["type"] = "symlink"
         try: data["target"] = os.readlink(path)
         except OSError: pass
     else: data["type"] = "file"
+    
     git_key = rel_path if args.tree else entry.split('/')[0]
     if args.git and git_key in g_stats: data["git_status"] = g_stats[git_key]
+    
     tag_info = tags.get(entry)
     if args.tags and tag_info:
         data["tag_state"], data["tag_codeset"] = tag_info[0], tag_info[1]
+        
     x_info = x_stats.get(entry)
     if args.extattr and x_info:
         data["extattr"] = {
@@ -330,20 +355,26 @@ def build_dict(entry, st, path, rel_path, g_stats, tags, x_stats, args):
             "shared_address_space": x_info[2] == 's', 
             "shared_library": x_info[3] == 'l'
         }
+        
     if args.dsn:
         dsn_val = get_zfs_dsn(path)
         if dsn_val: data["zfs_dataset"] = dsn_val
         
     return data
 
-def format_entry(entry, st, path, rel_path, g_stats, tags, x_stats, args, 
+def format_entry(entry, st, path, rel_path, g_stats, tags, x_stats, acls, args, 
                  t_pfx="", force_long=False):
     color = get_color(st.st_mode)
     icon = f"{get_icon(entry, st.st_mode)} " if args.icons else ""
+    
+    inode_str = f"{COLORS['inode']}{st.st_ino:<10}{COLORS['reset']} " if args.inode else ""
+    octal_str = f"{COLORS['perms']}{oct(st.st_mode)[-4:]:>5}{COLORS['reset']} " if args.octal else ""
+    
     git_key = rel_path if args.tree else entry.split('/')[0]
     git_badge = f"{format_git_badge(g_stats.get(git_key))} " if args.git else ""
     tag_badge = format_tag_badge(tags.get(entry)) if args.tags else ""
     x_badge = format_extattr_badge(x_stats.get(entry)) if args.extattr else ""
+    
     sym_tgt = ""
     tgt_vis_len = 0
     
@@ -362,26 +393,32 @@ def format_entry(entry, st, path, rel_path, g_stats, tags, x_stats, args,
             tgt_vis_len += 4 + len(dsn_val)
     
     if args.long or force_long:
-        perms = stat.filemode(st.st_mode)
+        perms = stat.filemode(st.st_mode) + ('+' if acls.get(entry) else ' ')
         links = st.st_nlink
-        user, group = get_owner_name(st.st_uid, st.st_gid)
+        user, group = get_owner_name(st.st_uid, st.st_gid, args.numeric)
         size_str = format_size(st, use_blocks=args.blocks)
-        mtime = datetime.fromtimestamp(st.st_mtime).strftime('%b %d %H:%M')
-        out = f"{COLORS['perms']}{perms}{COLORS['reset']} "
+        
+        time_val = st.st_atime if args.access else st.st_ctime if args.ctime else st.st_mtime
+        time_str = datetime.fromtimestamp(time_val).strftime('%b %d %H:%M')
+        
+        out = inode_str
+        if args.octal: out += octal_str
+        out += f"{COLORS['perms']}{perms}{COLORS['reset']} "
         out += f"{links:2} "
         out += f"{COLORS['user']}{user:<8}{COLORS['reset']} "
         out += f"{COLORS['group']}{group:<8}{COLORS['reset']} "
         out += f"{COLORS['size']}{size_str:>5}{COLORS['reset']} "
-        out += f"{COLORS['time']}{mtime}{COLORS['reset']} "
+        out += f"{COLORS['time']}{time_str}{COLORS['reset']} "
         out += f"{git_badge}{tag_badge}{x_badge}"
         out += f"{COLORS['tree_line']}{t_pfx}{COLORS['reset']}"
         out += f"{color}{icon}{entry}{COLORS['reset']}{sym_tgt}"
         return out, 0
     else:
-        out = f"{git_badge}{tag_badge}{x_badge}"
+        out = inode_str + f"{git_badge}{tag_badge}{x_badge}"
         out += f"{COLORS['tree_line']}{t_pfx}{COLORS['reset']}"
         out += f"{color}{icon}{entry}{COLORS['reset']}{sym_tgt}"
-        vlen = 3 if args.git else 0
+        vlen = 11 if args.inode else 0
+        vlen += 3 if args.git else 0
         vlen += 13 if args.tags else 0
         vlen += 7 if args.extattr else 0
         vlen += len(t_pfx) + (2 if args.icons else 0)
@@ -402,6 +439,7 @@ def process_directory(target_dir, args, g_stats, prefix="", r_base="", root=True
 
     zos_tags = get_zos_tags(target_dir) if args.tags else {}
     x_stats = get_extattrs(target_dir, raw_entries) if args.extattr else {}
+    acls = get_acls(target_dir) if (args.long or args.tree or args.oneline) else {}
 
     entries_with_stats = []
     for entry in raw_entries:
@@ -423,7 +461,9 @@ def process_directory(target_dir, args, g_stats, prefix="", r_base="", root=True
     if args.sort_size:
         files.sort(key=lambda x: x[1].st_size, reverse=not args.reverse)
     elif args.time:
-        files.sort(key=lambda x: x[1].st_mtime, reverse=not args.reverse)
+        if args.access: files.sort(key=lambda x: x[1].st_atime, reverse=not args.reverse)
+        elif args.ctime: files.sort(key=lambda x: x[1].st_ctime, reverse=not args.reverse)
+        else: files.sort(key=lambda x: x[1].st_mtime, reverse=not args.reverse)
     else:
         files.sort(key=lambda x: x[0].lower(), reverse=args.reverse)
         
@@ -440,7 +480,7 @@ def process_directory(target_dir, args, g_stats, prefix="", r_base="", root=True
         
         full_prefix = prefix + t_conn
         fmt_str, vlen = format_entry(
-            entry, st, path, rel_path, g_stats, zos_tags, x_stats, 
+            entry, st, path, rel_path, g_stats, zos_tags, x_stats, acls, 
             args, t_pfx=full_prefix
         )
         
@@ -448,7 +488,7 @@ def process_directory(target_dir, args, g_stats, prefix="", r_base="", root=True
         else: short_items.append((fmt_str, vlen))
             
         item_data = build_dict(
-            entry, st, path, rel_path, g_stats, zos_tags, x_stats, args
+            entry, st, path, rel_path, g_stats, zos_tags, x_stats, acls, args
         )
             
         if args.tree and stat.S_ISDIR(st.st_mode) and entry != '..':
@@ -679,7 +719,7 @@ def tui_loop(stdscr, start_paths, args):
     current_filter = ""
     
     items = []
-    g_stats, tags, x_stats = {}, {}, {}
+    g_stats, tags, x_stats, acls = {}, {}, {}, {}
     
     help_lines = [
         "Navigation:",
@@ -695,11 +735,18 @@ def tui_loop(stdscr, start_paths, args):
         "",
         "Sorting & Filtering:",
         "  s            : Sort Size",
-        "  t            : Sort Time",
+        "  t            : Sort MTime (Modified)",
+        "  a            : Sort ATime (Accessed)",
+        "  C            : Sort CTime (Changed)",
         "  n            : Sort Name",
         "  r            : Reverse Sort",
         "  f or /       : Filter by string",
-        "  c            : Clear filter (and global file filter if any)",
+        "  c            : Clear filter",
+        "",
+        "View Toggles:",
+        "  I            : Toggle Inode visibility",
+        "  O            : Toggle Octal permissions",
+        "  N            : Toggle Numeric UIDs/GIDs",
         "",
         "Settings:",
         "  o            : Change colors/editor",
@@ -725,6 +772,7 @@ def tui_loop(stdscr, start_paths, args):
             g_stats = get_git_statuses_recursive(current_dir) if args.git else {}
             tags = get_zos_tags(current_dir) if args.tags else {}
             x_stats = get_extattrs(current_dir, raw) if args.extattr else {}
+            acls = get_acls(current_dir)
             prev_dir = current_dir
             sel_idx, top_idx = 0, 0
             
@@ -749,6 +797,10 @@ def tui_loop(stdscr, start_paths, args):
             raw_files.sort(key=lambda x: (-x[1].st_size if not sort_rev else x[1].st_size))
         elif sort_by == 'time':
             raw_files.sort(key=lambda x: (-x[1].st_mtime if not sort_rev else x[1].st_mtime))
+        elif sort_by == 'atime':
+            raw_files.sort(key=lambda x: (-x[1].st_atime if not sort_rev else x[1].st_atime))
+        elif sort_by == 'ctime':
+            raw_files.sort(key=lambda x: (-x[1].st_ctime if not sort_rev else x[1].st_ctime))
         else:
             raw_files.sort(key=lambda x: (x[0].lower() if not sort_rev else -ord(x[0][0])))
             
@@ -789,11 +841,11 @@ def tui_loop(stdscr, start_paths, args):
                     continue
                     
                 ansi_str, _ = format_entry(
-                    entry, st, path, entry, g_stats, tags, x_stats, args, force_long=True
+                    entry, st, path, entry, g_stats, tags, x_stats, acls, args, force_long=True
                 )
                 addstr_ansi(stdscr, i + 3, 0, ansi_str, (top_idx + i == sel_idx), w)
                 
-        ftr = " q:Quit o:Opt e:Edt D,R,C:Ops s,t,n,r:Srt f,c:Flt F1:Help "
+        ftr = " q:Quit o:Opt D,R,C:Ops s,t,a,C,n,r:Srt I,O,N:Tgls f,c:Flt F1:Help "
         stdscr.addstr(h - 1, 0, ftr.ljust(w-1)[:w-1], curses.A_REVERSE)
         
         stdscr.nodelay(True)
@@ -820,9 +872,14 @@ def tui_loop(stdscr, start_paths, args):
         elif k == curses.KEY_UP: sel_idx -= 1
         elif k == curses.KEY_DOWN: sel_idx += 1
         elif k == ord('s'): sort_by = 'size'
-        elif k == ord('t'): sort_by = 'time'
+        elif k == ord('t'): sort_by = 'time'; args.access = False; args.ctime = False
+        elif k == ord('a'): sort_by = 'atime'; args.access = True; args.ctime = False
+        elif k == ord('C'): sort_by = 'ctime'; args.access = False; args.ctime = True
         elif k == ord('n'): sort_by = 'name'
         elif k == ord('r'): sort_rev = not sort_rev
+        elif k == ord('I'): args.inode = not args.inode
+        elif k == ord('O'): args.octal = not args.octal
+        elif k == ord('N'): args.numeric = not args.numeric
         elif k == ord('c'): 
             current_filter = ""
             if explicit_files:
@@ -905,7 +962,12 @@ def main():
     parser.add_argument('-l', '--long', action='store_true')
     parser.add_argument('-g', '--git', action='store_true')
     parser.add_argument('-t', '--time', action='store_true')
+    parser.add_argument('-u', '--access', action='store_true')
+    parser.add_argument('-c', '--ctime', action='store_true')
     parser.add_argument('-i', '--icons', action='store_true')
+    parser.add_argument('--inode', action='store_true')
+    parser.add_argument('-O', '--octal', action='store_true')
+    parser.add_argument('-n', '--numeric', action='store_true')
     parser.add_argument('-b', '--blocks', action='store_true')
     parser.add_argument('-J', '--json', metavar='FILE')
     parser.add_argument('-e', '--ext', metavar='EXT')
@@ -960,7 +1022,18 @@ def main():
         for path in file_paths:
             try:
                 st = os.lstat(path)
-                t_stat, x_stat = {}, {}
+                t_stat, x_stat, acls = {}, {}, {}
+                
+                if args.long or args.oneline or args.tree:
+                    # Run a single file ACL check
+                    try:
+                        res = subprocess.run(['ls', '-A', '-l', path], stdout=subprocess.PIPE, text=True)
+                        for line in res.stdout.splitlines():
+                            if line and line[0] in ('-', 'd', 'l', 'c', 'b', 'p', 's'):
+                                perms = line.split()[0]
+                                if perms.endswith('+'): acls[path] = True
+                    except: pass
+                
                 if args.tags:
                     try:
                         res = subprocess.run(['ls', '-T', '-1', path], 
@@ -978,7 +1051,7 @@ def main():
                     except Exception: pass
                 
                 fmt_str, vlen = format_entry(
-                    path, st, path, path, {}, t_stat, x_stat, args
+                    path, st, path, path, {}, t_stat, x_stat, acls, args
                 )
                 
                 if args.long or args.tree or args.oneline:
@@ -986,7 +1059,7 @@ def main():
                 else:
                     short_items.append((fmt_str, vlen))
                 
-                p_dict = build_dict(path, st, path, path, {}, t_stat, x_stat, args)
+                p_dict = build_dict(path, st, path, path, {}, t_stat, x_stat, acls, args)
                 path_dict["contents"].append(p_dict)
             except OSError:
                 print(f"{CMD_NAME}: cannot access '{path}'", file=sys.stderr)
@@ -1038,4 +1111,4 @@ if __name__ == '__main__':
     try:
         main()
     except KeyboardInterrupt:
-        sys.exit(130) # Standard UNIX exit code for abort via Ctrl+C
+        sys.exit(130)
