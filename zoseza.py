@@ -39,22 +39,22 @@ CLI Options:
   -D, --dsn             Show underlying zFS dataset names for directories and symlinks.
   --color WHEN          When to use terminal colors: auto, always, never (default: auto).
   --no-color            Disable all terminal colors (alias for --color=never).
-  --tui                 Launch the interactive fullscreen Text User Interface.
   -v, --version         Show program's version number and exit.
+  --tui                 Launch the interactive fullscreen Text User Interface.
 
 TUI Hotkeys:
   UP/DOWN : Navigate              s/t/a/C : Sort (Size/MTime/ATime/CTime)
   ENTER   : Open Dir/File         n/r     : Sort (Name/Reverse)
   ESC     : Go up one dir         f or /  : Filter by string
-  e       : Edit file             c       : Clear filter
+  e       : Edit file             i       : Inspect full file details
   D/R/C   : Delete/Rename/Copy    I/O/N   : Toggle Inode/Octal/Numeric IDs
+  c       : Clear filter
   q       : Quit                  F1      : Show help tutorial
   o       : Open settings
 
 Change History:
-  2026-11-17: Added -v / --version flag and explicit CLI help descriptions.
-  2026-11-17: Added --color (auto/always/never) and --no-color CLI options.
-  2026-11-16: Added polyglot shell/Python exec header for direct ASCII execution.
+  2026-11-17: Added 'i' hotkey in TUI to display comprehensive file metadata and z/OS attributes.
+  2026-11-17: Added -v / --version option, --color (auto/always/never), and --no-color CLI options.
   2026-11-16: Restored missing get_git_branch function.
   2026-11-16: Added standard UNIX ls extensions: --inode, -O (octal), -n (numeric IDs).
   2026-11-16: Added alternate timestamp sorting: -u (access time) and -c (change time).
@@ -79,8 +79,8 @@ import re
 import curses
 from datetime import datetime
 
+VERSION = "1.3.0"
 CMD_NAME = os.path.basename(sys.argv[0])
-VERSION = "1.2.0 (2026-11-17)"
 
 # ANSI Color Codes
 COLORS = {
@@ -651,6 +651,199 @@ def addstr_ansi(stdscr, y, x, text, sel=False, max_w=80):
             except curses.error: pass
             curr_x += len(content[:allowed])
 
+def show_file_info(stdscr, entry, st, path):
+    abs_path = os.path.abspath(path)
+    parent_dir = os.path.dirname(abs_path) if not stat.S_ISDIR(st.st_mode) else abs_path
+
+    if stat.S_ISDIR(st.st_mode): f_type = "Directory"
+    elif stat.S_ISLNK(st.st_mode): f_type = "Symbolic Link"
+    elif stat.S_ISREG(st.st_mode): f_type = "Regular File"
+    elif stat.S_ISFIFO(st.st_mode): f_type = "FIFO / Named Pipe"
+    elif stat.S_ISSOCK(st.st_mode): f_type = "Socket"
+    elif stat.S_ISCHR(st.st_mode): f_type = "Character Device"
+    elif stat.S_ISBLK(st.st_mode): f_type = "Block Device"
+    else: f_type = "Unknown"
+
+    sym_target = None
+    if stat.S_ISLNK(st.st_mode):
+        try: sym_target = os.readlink(path)
+        except OSError as e: sym_target = f"(Error reading link: {e})"
+
+    user_name, group_name = get_owner_name(st.st_uid, st.st_gid, numeric=False)
+    perms_sym = stat.filemode(st.st_mode)
+    perms_oct = oct(st.st_mode)[-4:]
+    size_human = format_size(st, use_blocks=False).strip()
+    blocks_512 = getattr(st, 'st_blocks', 0)
+
+    mtime_str = datetime.fromtimestamp(st.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+    atime_str = datetime.fromtimestamp(st.st_atime).strftime('%Y-%m-%d %H:%M:%S')
+    ctime_str = datetime.fromtimestamp(st.st_ctime).strftime('%Y-%m-%d %H:%M:%S')
+
+    # Query z/OS file tags (ls -T)
+    tag_str = "Untagged / Not Available"
+    try:
+        res = subprocess.run(['ls', '-d', '-T', path], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        out_lines = res.stdout.splitlines()
+        if out_lines:
+            parts = out_lines[0].strip().split()
+            if len(parts) >= 3 and parts[0] in ('t', 'b', '-', 'm'):
+                state_map = {'t': 'Text (t)', 'b': 'Binary (b)', 'm': 'Mixed (m)', '-': 'Untagged (-)'}
+                tag_str = f"{state_map.get(parts[0], parts[0])} | Codeset: {parts[1]} |TxtFlag: {parts[2]}"
+    except Exception: pass
+
+    # Query z/OS extended attributes (extattr)
+    ext_str = "None / Not Available"
+    ext_details = []
+    try:
+        res = subprocess.run(['extattr', path], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        for line in res.stdout.splitlines():
+            parts = line.split(None, 4)
+            if len(parts) >= 4 and all(len(p) == 1 for p in parts[:4]):
+                flags = "".join(parts[:4])
+                flag_desc = []
+                if parts[0] == 'a': flag_desc.append("APF Authorized (a)")
+                if parts[1] == 'p': flag_desc.append("Program Controlled (p)")
+                if parts[2] == 's': flag_desc.append("Shared Address Space (s)")
+                if parts[3] == 'l': flag_desc.append("Shared Library (l)")
+                ext_str = f"[{flags}] " + (", ".join(flag_desc) if flag_desc else "No active flags")
+                break
+    except Exception: pass
+
+    # Query zFS Dataset & Mount info (df -P)
+    dsn_val = get_zfs_dsn(path) or "Unknown"
+    mount_point = "Unknown"
+    try:
+        res = subprocess.run(['df', '-P', path], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        d_lines = res.stdout.splitlines()
+        if len(d_lines) >= 2:
+            d_parts = d_lines[1].split()
+            if len(d_parts) >= 6:
+                mount_point = d_parts[5]
+    except Exception: pass
+
+    # Query ACL entries (getfacl or ls -ld)
+    has_acl = False
+    acl_lines = []
+    try:
+        res = subprocess.run(['ls', '-d', '-l', path], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        if res.stdout:
+            p_field = res.stdout.splitlines()[0].split()[0]
+            if p_field.endswith('+'):
+                has_acl = True
+    except Exception: pass
+
+    if has_acl:
+        try:
+            res = subprocess.run(['getfacl', path], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+            for l in res.stdout.splitlines():
+                if l.strip() and not l.startswith('#'):
+                    acl_lines.append("    " + l.strip())
+        except Exception: pass
+
+    # Query Git status & branch
+    git_branch = get_git_branch(parent_dir)
+    git_status = "Clean / Tracked"
+    if git_branch:
+        try:
+            res = subprocess.run(['git', 'status', '--porcelain', abs_path],
+                                 cwd=parent_dir, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+            if res.stdout.strip():
+                git_status = res.stdout.strip()[:2].strip()
+        except Exception: pass
+    else:
+        git_status = "Not in a Git repository"
+
+    info_lines = [
+        f"File Name        : {entry}",
+        f"Full Path        : {abs_path}",
+        f"File Type        : {f_type}",
+    ]
+    if sym_target is not None:
+        info_lines.append(f"Symlink Target   : {sym_target}")
+
+    info_lines.extend([
+        "",
+        "--- Ownership & Permissions ---",
+        f"Permissions      : {perms_sym}{'+' if has_acl else ''} (Octal: {perms_oct})",
+        f"Owner (UID)      : {user_name} ({st.st_uid})",
+        f"Group (GID)      : {group_name} ({st.st_gid})",
+        f"Extended ACLs    : {'Yes (+)' if has_acl else 'No'}",
+    ])
+    if acl_lines:
+        info_lines.extend(acl_lines[:10])
+
+    info_lines.extend([
+        "",
+        "--- Size & Storage ---",
+        f"Size             : {size_human} ({st.st_size:,} bytes)",
+        f"512B Blocks      : {blocks_512}",
+        f"Inode            : {st.st_ino}",
+        f"Hard Links       : {st.st_nlink}",
+        f"Device ID        : {st.st_dev}",
+        "",
+        "--- z/OS USS Attributes ---",
+        f"File Tag (chtag) : {tag_str}",
+        f"ExtAttr          : {ext_str}",
+        f"zFS Dataset      : {dsn_val}",
+        f"Mount Point      : {mount_point}",
+        "",
+        "--- Timestamps ---",
+        f"Modified (mtime) : {mtime_str}",
+        f"Accessed (atime) : {atime_str}",
+        f"Changed  (ctime) : {ctime_str}",
+        "",
+        "--- Git Integration ---",
+        f"Git Branch       : {git_branch or 'N/A'}",
+        f"Git Status       : {git_status}",
+    ])
+
+    top = 0
+    while True:
+        h, w = stdscr.getmaxyx()
+        stdscr.clear()
+
+        hdr = f" File Info: {entry} | UP/DN: Scroll | q/ESC/i: Close "
+        stdscr.addstr(0, 0, hdr.ljust(w - 1)[:w - 1], curses.A_REVERSE)
+
+        view_h = h - 2
+        for idx in range(view_h):
+            if top + idx < len(info_lines):
+                line = info_lines[top + idx]
+                attr = curses.A_BOLD if line.startswith("---") else curses.A_NORMAL
+                try:
+                    stdscr.addstr(idx + 1, 2, line[:w - 4], attr)
+                except curses.error:
+                    pass
+
+        ftr = " Press q, i, or ESC to return to browser "
+        stdscr.addstr(h - 1, 0, ftr.ljust(w - 1)[:w - 1], curses.A_REVERSE)
+
+        stdscr.nodelay(True)
+        k = stdscr.getch()
+        stdscr.nodelay(False)
+        if k == -1:
+            k = stdscr.getch()
+
+        if k == 27:
+            stdscr.nodelay(True)
+            k2 = stdscr.getch()
+            stdscr.nodelay(False)
+            if k2 == -1:
+                break
+            else:
+                curses.ungetch(k2)
+
+        if k in (ord('q'), ord('i'), curses.KEY_ENTER, 10, 13):
+            break
+        elif k == curses.KEY_UP:
+            top = max(0, top - 1)
+        elif k == curses.KEY_DOWN:
+            top = min(max(0, len(info_lines) - view_h), top + 1)
+        elif k == curses.KEY_PPAGE:
+            top = max(0, top - (view_h - 1))
+        elif k == curses.KEY_NPAGE:
+            top = min(max(0, len(info_lines) - view_h), top + (view_h - 1))
+
 def view_file(stdscr, path):
     try:
         with open(path, 'r', errors='replace') as f:
@@ -752,6 +945,7 @@ def tui_loop(stdscr, start_paths, args):
         "  ESC          : Go up one directory",
         "",
         "File Operations:",
+        "  i            : Inspect full file info/metadata",
         "  e            : Edit file (vi, etc)",
         "  D            : Delete file/dir",
         "  R            : Rename file/dir",
@@ -869,7 +1063,7 @@ def tui_loop(stdscr, start_paths, args):
                 )
                 addstr_ansi(stdscr, i + 3, 0, ansi_str, (top_idx + i == sel_idx), w)
                 
-        ftr = " q:Quit o:Opt D,R,C:Ops s,t,a,C,n,r:Srt I,O,N:Tgls f,c:Flt F1:Help "
+        ftr = " q:Quit i:Info o:Opt D,R,C:Ops s,t,a,C,n,r:Srt I,O,N:Tgls f,c:Flt F1:Help "
         stdscr.addstr(h - 1, 0, ftr.ljust(w-1)[:w-1], curses.A_REVERSE)
         
         stdscr.nodelay(True)
@@ -955,6 +1149,10 @@ def tui_loop(stdscr, start_paths, args):
                     apply_curses_colors(config)
                     sync_ansi_colors(config)
                 prev_dir = None 
+        elif k == ord('i'):
+            sel = items[sel_idx]
+            if sel[1]:
+                show_file_info(stdscr, sel[0], sel[1], sel[2])
         elif k == ord('e'):
             sel = items[sel_idx]
             if sel[1] and not stat.S_ISDIR(sel[1].st_mode):
@@ -982,36 +1180,37 @@ def main():
     apply_ls_colors() 
     
     parser = argparse.ArgumentParser(description="Python eza clone for z/OS (TUI Config saved to ~/.pyeza.json)")
-    parser.add_argument('paths', nargs='*', default=['.'], help="Files or directories to list (default: current directory)")
-    parser.add_argument('-a', '--all', action='store_true', help="Show hidden files (starting with .)")
-    parser.add_argument('-l', '--long', action='store_true', help="Display extended metadata (perms, links, owner, group, size, time)")
-    parser.add_argument('-g', '--git', action='store_true', help="Show Git status badges and the current branch")
-    parser.add_argument('-t', '--time', action='store_true', help="Sort by modification time (newest first)")
-    parser.add_argument('-u', '--access', action='store_true', help="Sort/display by last access time (atime)")
-    parser.add_argument('-c', '--ctime', action='store_true', help="Sort/display by status change time (ctime)")
-    parser.add_argument('-i', '--icons', action='store_true', help="Display Nerd Font icons next to filenames")
-    parser.add_argument('--inode', action='store_true', help="Display the file serial number (inode)")
-    parser.add_argument('-O', '--octal', action='store_true', help="Display file permissions in octal format")
-    parser.add_argument('-n', '--numeric', action='store_true', help="List numeric UIDs and GIDs instead of names")
-    parser.add_argument('-b', '--blocks', action='store_true', help="Display file sizes in 512-byte blocks instead of bytes")
-    parser.add_argument('-J', '--json', metavar='FILE', help="Export directory listing data to a specified JSON file")
-    parser.add_argument('-e', '--ext', metavar='EXT', help="Filter by comma-separated file extensions (e.g., txt,rex,c)")
-    parser.add_argument('-R', '--regex', metavar='PATTERN', help="Filter files matching a regular expression")
-    parser.add_argument('-T', '--tags', action='store_true', help="Display z/OS file tags (state, codeset)")
-    parser.add_argument('-x', '--extattr', action='store_true', help="Display z/OS extended attributes (APF, program control, etc.)")
-    parser.add_argument('--tree', action='store_true', help="Display output in a recursive tree topology")
-    parser.add_argument('-d', '--directory', action='store_true', help="List directories themselves, not their contents")
-    parser.add_argument('-S', '--sort-size', action='store_true', help="Sort files by size (largest first)")
-    parser.add_argument('-r', '--reverse', action='store_true', help="Reverse the current sort order")
-    parser.add_argument('-1', '--oneline', action='store_true', help="Display one entry per line")
-    parser.add_argument('-D', '--dsn', action='store_true', help="Show underlying zFS dataset names for directories and symlinks")
+    parser.add_argument('paths', nargs='*', default=['.'])
+    parser.add_argument('-a', '--all', action='store_true')
+    parser.add_argument('-l', '--long', action='store_true')
+    parser.add_argument('-g', '--git', action='store_true')
+    parser.add_argument('-t', '--time', action='store_true')
+    parser.add_argument('-u', '--access', action='store_true')
+    parser.add_argument('-c', '--ctime', action='store_true')
+    parser.add_argument('-i', '--icons', action='store_true')
+    parser.add_argument('--inode', action='store_true')
+    parser.add_argument('-O', '--octal', action='store_true')
+    parser.add_argument('-n', '--numeric', action='store_true')
+    parser.add_argument('-b', '--blocks', action='store_true')
+    parser.add_argument('-J', '--json', metavar='FILE')
+    parser.add_argument('-e', '--ext', metavar='EXT')
+    parser.add_argument('-R', '--regex', metavar='PATTERN')
+    parser.add_argument('-T', '--tags', action='store_true')
+    parser.add_argument('-x', '--extattr', action='store_true')
+    parser.add_argument('--tree', action='store_true')
+    parser.add_argument('-d', '--directory', action='store_true')
+    parser.add_argument('-S', '--sort-size', action='store_true')
+    parser.add_argument('-r', '--reverse', action='store_true')
+    parser.add_argument('-1', '--oneline', action='store_true')
+    parser.add_argument('-D', '--dsn', action='store_true', help="Show underlying zFS dataset names")
     parser.add_argument('--color', choices=['auto', 'always', 'never'], default='auto',
                         help="When to use terminal colors (auto, always, never)")
     parser.add_argument('--no-color', action='store_true',
                         help="Disable all terminal colors (same as --color=never)")
-    parser.add_argument('--tui', action='store_true', help="Launch the interactive fullscreen Text User Interface")
-    parser.add_argument('-v', '--version', action='version', version=f"%(prog)s {VERSION}",
+    parser.add_argument('-v', '--version', action='version',
+                        version=f"%(prog)s {VERSION} (z/OS USS)",
                         help="Show program's version number and exit")
+    parser.add_argument('--tui', action='store_true')
     
     args = parser.parse_args()
     
@@ -1153,3 +1352,4 @@ if __name__ == '__main__':
         main()
     except KeyboardInterrupt:
         sys.exit(130)
+

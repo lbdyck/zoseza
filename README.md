@@ -8,13 +8,13 @@
 
 `zoseza` provides robust colorized terminal output, native EBCDIC/ASCII tag support (`chtag`), extended attribute inspection (`extattr`), zFS dataset resolution, and Git status integration.
 
-It features both a standard CLI format and an interactive full-screen Text User Interface (TUI) for navigating, sorting, filtering, editing, and managing files directly on the mainframe.
+It features both a standard CLI format and an interactive full-screen Text User Interface (TUI) for navigating, sorting, filtering, inspecting, editing, and managing files directly on the mainframe.
 
 ## Sample Output
 
 Running `zoseza.py -laTgD` inside a z/OS USS Git repository:
 
-```text
+```
 . [ZOWE.ZFS.USERS] on  main:
 Permissions Ln User     Group     Size Modified     Git Tag Info      Name  [Dataset]
 drwxr-xr-x  39 LBDYCK   ZOWEDEV   8.0K Nov 16 16:00 --                ..  [ZOWE.ZFS.USERS]
@@ -26,7 +26,7 @@ drwxr-xr-x   7 LBDYCK   ZOWEDEV   8.0K Nov 17 08:15 --                .git  [ZOW
 
 ## Prerequisites
 
-* **Base z/OS USS Utilities:** Uses standard built-in z/OS commands (`ls`, `df`, `extattr`, `chtag`) for metadata, file tagging, ACLs, and zFS mount resolution.
+* **Base z/OS USS Utilities:** Uses standard built-in z/OS commands (`ls`, `df`, `extattr`, `chtag`, `getfacl`) for metadata, file tagging, ACLs, and zFS mount resolution.
 * **Python 3:** Requires `python3` (such as IBM Open Enterprise SDK for Python or the [zopen community](https://zopen.community/) Python port).
 * **Optional Dependencies:**
   * `git` (via zopen community or Rocket) for `-g` / `--git` repository status and branch display.
@@ -36,13 +36,13 @@ drwxr-xr-x   7 LBDYCK   ZOWEDEV   8.0K Nov 17 08:15 --                .git  [ZOW
 
 You can run the utility directly from the shell or with Python 3:
 
-```bash
+```
 ./zoseza.py [OPTIONS] [PATHS...]
 ```
 
 For daily use, add `zoseza.py` to your `PATH` (or symlink it) and add these convenient shortcuts to your `~/.bashrc` or `~/.zshrc`:
 
-```bash
+```
 # Base command aliases
 alias zoseza='/path/to/zoseza/zoseza.py'
 alias zeza='/path/to/zoseza/zoseza.py'
@@ -114,8 +114,9 @@ alias ztui='zoseza --tui'       # Launch interactive full-screen TUI
 * **`O`** : Toggle Octal permissions
 * **`N`** : Toggle Numeric UIDs/GIDs
 
-**File Operations**
+**File Operations & Inspection**
 
+* **`i`** : Inspect full file metadata (permissions, ACLs, `chtag`, `extattr`, zFS dataset/mount, timestamps, and Git status)
 * **`e`** : Edit file
 * **`D/R/C`** : Delete / Rename / Copy
 
@@ -123,7 +124,7 @@ alias ztui='zoseza --tui'       # Launch interactive full-screen TUI
 
 When you save settings inside the TUI (by pressing `o` then `s`), preferences are stored in `~/.pyeza.json`. You can also create or edit this file manually:
 
-```json
+```
 {
   "editor": "vim",
   "color_dir": 4,
@@ -132,9 +133,11 @@ When you save settings inside the TUI (by pressing `o` then `s`), preferences ar
   "color_def": 7
 }
 ```
+
 *(Color codes follow standard curses/ANSI indices: `0`=Black, `1`=Red, `2`=Green, `3`=Yellow, `4`=Blue, `5`=Magenta, `6`=Cyan, `7`=White).*
 
 **Environment Variables:**
+
 * `EDITOR`: Default text editor for the TUI `e` hotkey if not overridden in `~/.pyeza.json` (defaults to `vi`).
 * `LS_COLORS`: Standard UNIX color definitions (`di`, `ex`, `ln`, `fi`) are automatically respected in CLI output.
 * `NO_COLOR`: If set in your environment, disables ANSI colors by default (per [no-color.org](https://no-color.org/)).
@@ -145,20 +148,21 @@ On z/OS USS, ASCII tools like zopen `vim` and `git` expect source files to be en
 
 To allow `zoseza.py` to remain in `ISO8859-1` (so you can edit it cleanly in `vim`) while still executing directly from your shell (`./zoseza.py`), line 2 of the script uses a POSIX shell/Python polyglot header:
 
-```python
+```
 #!/usr/bin/env python3
 "exec" "python3" "$0" "$@"
 ```
 
 If you clone or transfer `zoseza.py` to a new z/OS system, ensure its file tag and execute permissions are set properly:
 
-```bash
+```
 chtag -tc ISO8859-1 zoseza.py
 chmod 755 zoseza.py
 ```
 
 ## Change History
 
+* **2026-11-17**: Added `i` hotkey in TUI to display a scrollable full-screen inspector with complete file metadata, ACLs, `chtag` info, `extattr` flags, zFS dataset/mount point, timestamps, and Git status.
 * **2026-11-17**: Added `-v` / `--version` flag and descriptive `--help` strings for all CLI options.
 * **2026-11-17**: Added `--color` (`auto`, `always`, `never`), `--no-color`, and `NO_COLOR` environment variable support.
 * **2026-11-16**: Added polyglot shell/Python `exec` header for direct execution while maintaining ASCII `vim` compatibility.
