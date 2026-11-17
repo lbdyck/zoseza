@@ -1,0 +1,190 @@
+.TH ZOSEZA 1 "November 2026" "zoseza 1.3.0" "User Commands"
+
+.SH NAME
+zoseza \- modern eza-inspired file listing utility for IBM z/OS USS
+
+.SH SYNOPSIS
+.B zoseza.py
+[\fIOPTIONS\fR]
+[\fIPATH\fR ...]
+
+.SH DESCRIPTION
+.B zoseza
+is a feature-rich Python implementation inspired by the
+.B eza
+directory listing utility and tailored specifically for IBM z/OS UNIX System Services (USS).
+
+It combines modern file listing capabilities with z/OS-specific features including colorized output, EBCDIC and ASCII file tag awareness, extended attribute inspection, zFS dataset resolution, and Git repository integration.
+
+In addition to a traditional command-line interface, zoseza provides an interactive full-screen Text User Interface (TUI) for browsing, sorting, filtering, inspecting, editing, and managing files directly on the mainframe.
+
+TUI configuration and preferences are stored in:
+
+.RS
+~/.pyeza.json
+.RE
+
+.SH POSITIONAL ARGUMENTS
+
+.TP
+.I paths
+One or more files or directories to display.
+
+.SH OPTIONS
+
+.TP
+.BR -h ", " --help
+Display help information and exit.
+
+.TP
+.BR -a ", " --all
+Show hidden files.
+
+.TP
+.BR -l ", " --long
+Display detailed file information.
+
+.TP
+.BR -g ", " --git
+Display Git status information.
+
+.TP
+.BR -t ", " --time
+Sort entries by modification time.
+
+.TP
+.BR -u ", " --access
+Use last access time.
+
+.TP
+.BR -c ", " --ctime
+Use status change time.
+
+.TP
+.BR -i ", " --icons
+Display file type icons.
+
+.TP
+.B --inode
+Display inode numbers.
+
+.TP
+.BR -O ", " --octal
+Display permissions in octal format.
+
+.TP
+.BR -n ", " --numeric
+Display numeric user and group IDs.
+
+.TP
+.BR -b ", " --blocks
+Display block allocation information.
+
+.TP
+.BR -J ", " --json " " FILE
+Write output in JSON format to FILE.
+
+.TP
+.BR -e ", " --ext " " EXT
+Show only files matching the specified extension.
+
+.TP
+.BR -R ", " --regex " " PATTERN
+Filter entries using a regular expression.
+
+.TP
+.BR -T ", " --tags
+Display z/OS file tag information obtained from
+.BR chtag .
+
+.TP
+.BR -x ", " --extattr
+Display z/OS extended file attributes.
+
+.TP
+.B --tree
+Display directories in tree format.
+
+.TP
+.BR -d ", " --directory
+List directories themselves rather than their contents.
+
+.TP
+.BR -S ", " --sort-size
+Sort entries by file size.
+
+.TP
+.BR -r ", " --reverse
+Reverse sort order.
+
+.TP
+.BR -1 ", " --oneline
+Display one entry per line.
+
+.TP
+.BR -D ", " --dsn
+Show underlying zFS dataset names.
+
+.TP
+.BI --color " {auto|always|never}"
+Control colorized output.
+
+.TP
+.B --no-color
+Disable all terminal colors.
+
+.TP
+.BR -v ", " --version
+Display version information and exit.
+
+.TP
+.B --tui
+Launch the interactive Text User Interface.
+
+.SH FILES
+
+.TP
+.I ~/.pyeza.json
+User preferences and TUI configuration file.
+
+.SH EXAMPLES
+
+.TP
+List files in the current directory:
+.B zoseza.py
+
+.TP
+Show hidden files with long output:
+.B zoseza.py -al
+
+.TP
+Display Git status information:
+.B zoseza.py -g
+
+.TP
+Show file tags and extended attributes:
+.B zoseza.py -T -x
+
+.TP
+Display a directory tree:
+.B zoseza.py --tree
+
+.TP
+Launch the TUI:
+.B zoseza.py --tui
+
+.SH SEE ALSO
+
+.BR ls (1),
+.BR eza (1),
+.BR chtag (1),
+.BR extattr (1)
+
+.SH AUTHOR
+
+zoseza was developed for IBM z/OS UNIX System Services users seeking a modern, feature-rich alternative to traditional file listing tools.
+
+.SH COPYRIGHT
+
+Copyright (C) 2026.
+Licensed under the terms provided with the project.
