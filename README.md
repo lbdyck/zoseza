@@ -21,6 +21,7 @@ drwxr-xr-x  39 LBDYCK   ZOWEDEV   8.0K Nov 16 16:00 --                ..  [ZOWE.
 drwxr-xr-x   7 LBDYCK   ZOWEDEV   8.0K Nov 17 08:15 --                .git  [ZOWE.ZFS.USERS]
 -rw-r--r--   1 LBDYCK   ZOWEDEV   1.0K Nov 16 16:00 --  t UTF-8       LICENSE  [ZOWE.ZFS.USERS]
 -rw-r--r--   1 LBDYCK   ZOWEDEV   6.2K Nov 17 09:10  M  t ISO8859-1   README.md  [ZOWE.ZFS.USERS]
+-rw-r--r--   1 LBDYCK   ZOWEDEV   4.8K Nov 17 09:12 --  t ISO8859-1   zoseza.1  [ZOWE.ZFS.USERS]
 -rwxr-xr-x   1 LBDYCK   ZOWEDEV  46.4K Nov 17 09:05 --  t ISO8859-1   zoseza.py  [ZOWE.ZFS.USERS]
 ```
 
@@ -30,19 +31,20 @@ drwxr-xr-x   7 LBDYCK   ZOWEDEV   8.0K Nov 17 08:15 --                .git  [ZOW
 * **Python 3:** Requires `python3` (such as IBM Open Enterprise SDK for Python or the [zopen community](https://zopen.community/) Python port).
 * **Optional Dependencies:**
   * `git` (via zopen community or Rocket) for `-g` / `--git` repository status and branch display.
+  * `zotman` / `man-db` (via zopen community) for viewing and indexing the `ISO8859-1` `zoseza.1` manpage natively.
   * A [Nerd Font](https://www.nerdfonts.com/) installed on your local terminal emulator (e.g., Windows Terminal, iTerm2, WezTerm) if using `-i` / `--icons`.
 
 ## Usage & Recommended Aliases
 
 You can run the utility directly from the shell or with Python 3:
 
-```
+```bash
 ./zoseza.py [OPTIONS] [PATHS...]
 ```
 
 For daily use, add `zoseza.py` to your `PATH` (or symlink it) and add these convenient shortcuts to your `~/.bashrc` or `~/.zshrc`:
 
-```
+```bash
 # Base command aliases
 alias zoseza='/path/to/zoseza/zoseza.py'
 alias zeza='/path/to/zoseza/zoseza.py'
@@ -58,38 +60,63 @@ alias ltree='zoseza --tree'     # Recursive tree view
 alias ztui='zoseza --tui'       # Launch interactive full-screen TUI
 ```
 
+## Manpage Installation (`zotman` / `man-db`)
+
+The included `zoseza.1` manpage is maintained in ASCII (`ISO8859-1`) and is designed to work seamlessly with `zotman` (`man-db`) from the [zopen community](https://zopen.community/) project.
+
+To preview the manpage directly from the repository directory:
+
+```bash
+zotman ./zoseza.1
+```
+
+To install the manpage system-wide (or into your zopen environment) so `man zoseza` works from anywhere:
+
+1. **Copy `zoseza.1` to your `man1` directory** (typically `$ZOPEN_ROOTFS/usr/local/share/man/man1/` or `/usr/local/share/man/man1/`, or a directory listed in your `$MANPATH`):
+   ```bash
+   mkdir -p "${ZOPEN_ROOTFS}/usr/local/share/man/man1"
+   cp zoseza.1 "${ZOPEN_ROOTFS}/usr/local/share/man/man1/zoseza.1"
+   chtag -tc ISO8859-1 "${ZOPEN_ROOTFS}/usr/local/share/man/man1/zoseza.1"
+   ```
+2. **Update the `man-db` index** (do not forget this step so `man` and `apropos` can locate the new page):
+   ```bash
+   mandb
+   ```
+
+Once `mandb` finishes, you can view the documentation anytime by running `man zoseza` (or `zotman zoseza`).
+
 ## CLI Options
 
-| Flag | Description | 
-| ----- | ----- | 
-| `paths` | Files or directories to list (default: current directory). | 
-| `-a`, `--all` | Show hidden files (starting with `.`). | 
-| `-l`, `--long` | Display extended metadata (perms, links, owner, group, size, time). | 
-| `-g`, `--git` | Show Git status badges and the current branch. | 
-| `-t`, `--time` | Sort by modification time (newest first). | 
-| `-u`, `--access` | Sort/display by last access time (atime). | 
-| `-c`, `--ctime` | Sort/display by status change time (ctime). | 
-| `-i`, `--icons` | Display Nerd Font icons next to filenames. | 
-| `--inode` | Display the file serial number (inode). | 
-| `-O`, `--octal` | Display file permissions in octal format. | 
-| `-n`, `--numeric` | List numeric UIDs and GIDs instead of names. | 
-| `-b`, `--blocks` | Display file sizes in 512-byte blocks instead of bytes. | 
-| `-J`, `--json FILE` | Export directory listing data to a specified JSON file. | 
-| `-e`, `--ext EXT` | Filter by comma-separated file extensions (e.g., txt,rex,c). | 
-| `-R`, `--regex PATTERN` | Filter files matching a regular expression. | 
-| `-T`, `--tags` | Display z/OS file tags (state, codeset). | 
-| `-x`, `--extattr` | Display z/OS extended attributes (APF, program control, etc.). | 
-| `--tree` | Display output in a recursive tree topology. | 
-| `-d`, `--directory` | List directories themselves, not their contents. | 
-| `-S`, `--sort-size` | Sort files by size (largest first). | 
-| `-r`, `--reverse` | Reverse the current sort order. | 
-| `-1`, `--oneline` | Display one entry per line. | 
-| `-D`, `--dsn` | Show underlying zFS dataset names for directories and symlinks. | 
-| `--color WHEN` | When to use terminal colors: `auto`, `always`, `never` (default: `auto`). | 
-| `--no-color` | Disable all terminal colors (alias for `--color=never`). Also respects the `NO_COLOR` environment variable. | 
-| `--tui` | Launch the interactive fullscreen Text User Interface. | 
-| `-v`, `--version` | Show program's version number and exit. | 
-| `-h`, `--help` | Show the CLI help message and exit. | 
+| Flag | Description |
+| ----- | ----- |
+| `paths` | Files or directories to list (default: current directory). |
+| `-a`, `--all` | Show hidden files (starting with `.`). |
+| `-l`, `--long` | Display extended metadata (perms, links, owner, group, size, time). |
+| `-g`, `--git` | Show Git status badges and the current branch. |
+| `-t`, `--time` | Sort by modification time (newest first). |
+| `-u`, `--access` | Sort/display by last access time (atime). |
+| `-c`, `--ctime` | Sort/display by status change time (ctime). |
+| `-i`, `--icons` | Display Nerd Font icons next to filenames. |
+| `--inode` | Display the file serial number (inode). |
+| `-O`, `--octal` | Display file permissions in octal format. |
+| `-n`, `--numeric` | List numeric UIDs and GIDs instead of names. |
+| `-b`, `--blocks` | Display file sizes in 512-byte blocks instead of bytes. |
+| `-J`, `--json FILE` | Export directory listing data to a specified JSON file. |
+| `-e`, `--ext EXT` | Filter by comma-separated file extensions (e.g., txt,rex,c). |
+| `-R`, `--regex PATTERN` | Filter files matching a regular expression. |
+| `-T`, `--tags` | Display z/OS file tags (state, codeset). |
+| `-x`, `--extattr` | Display z/OS extended attributes (APF, program control, etc.). |
+| `--tree` | Display output in a recursive tree topology. |
+| `-d`, `--directory` | List directories themselves, not their contents. |
+| `-S`, `--sort-size` | Sort files by size (largest first). |
+| `-r`, `--reverse` | Reverse the current sort order. |
+| `-1`, `--oneline` | Display one entry per line. |
+| `-D`, `--dsn` | Show underlying zFS dataset names for directories and symlinks. |
+| `--color WHEN` | When to use terminal colors: `auto`, `always`, `never` (default: `auto`). |
+| `--no-color` | Disable all terminal colors (alias for `--color=never`). Also respects the `NO_COLOR` environment variable. |
+| `--tui` | Launch the interactive fullscreen Text User Interface. |
+| `-v`, `--version` | Show program's version number and exit. |
+| `-h`, `--help` | Show the CLI help message and exit. |
 
 ## TUI Hotkeys
 
@@ -124,7 +151,7 @@ alias ztui='zoseza --tui'       # Launch interactive full-screen TUI
 
 When you save settings inside the TUI (by pressing `o` then `s`), preferences are stored in `~/.pyeza.json`. You can also create or edit this file manually:
 
-```
+```json
 {
   "editor": "vim",
   "color_dir": 4,
@@ -148,20 +175,21 @@ On z/OS USS, ASCII tools like zopen `vim` and `git` expect source files to be en
 
 To allow `zoseza.py` to remain in `ISO8859-1` (so you can edit it cleanly in `vim`) while still executing directly from your shell (`./zoseza.py`), line 2 of the script uses a POSIX shell/Python polyglot header:
 
-```
+```python
 #!/usr/bin/env python3
 "exec" "python3" "$0" "$@"
 ```
 
 If you clone or transfer `zoseza.py` to a new z/OS system, ensure its file tag and execute permissions are set properly:
 
-```
-chtag -tc ISO8859-1 zoseza.py
+```bash
+chtag -tc ISO8859-1 zoseza.py zoseza.1 README.md
 chmod 755 zoseza.py
 ```
 
 ## Change History
 
+* **2026-11-17**: Added `zoseza.1` manpage documentation with `zotman` (`man-db`) installation and `mandb` indexing instructions.
 * **2026-11-17**: Added `i` hotkey in TUI to display a scrollable full-screen inspector with complete file metadata, ACLs, `chtag` info, `extattr` flags, zFS dataset/mount point, timestamps, and Git status.
 * **2026-11-17**: Added `-v` / `--version` flag and descriptive `--help` strings for all CLI options.
 * **2026-11-17**: Added `--color` (`auto`, `always`, `never`), `--no-color`, and `NO_COLOR` environment variable support.

@@ -1,190 +1,230 @@
 .TH ZOSEZA 1 "November 2026" "zoseza 1.3.0" "User Commands"
-
 .SH NAME
 zoseza \- modern eza-inspired file listing utility for IBM z/OS USS
-
 .SH SYNOPSIS
 .B zoseza.py
 [\fIOPTIONS\fR]
 [\fIPATH\fR ...]
-
 .SH DESCRIPTION
 .B zoseza
 is a feature-rich Python implementation inspired by the
 .B eza
-directory listing utility and tailored specifically for IBM z/OS UNIX System Services (USS).
-
-It combines modern file listing capabilities with z/OS-specific features including colorized output, EBCDIC and ASCII file tag awareness, extended attribute inspection, zFS dataset resolution, and Git repository integration.
-
-In addition to a traditional command-line interface, zoseza provides an interactive full-screen Text User Interface (TUI) for browsing, sorting, filtering, inspecting, editing, and managing files directly on the mainframe.
-
-TUI configuration and preferences are stored in:
-
-.RS
-~/.pyeza.json
-.RE
-
+directory listing utility and tailored specifically for IBM z/OS UNIX
+System Services (USS).
+.PP
+It combines modern file listing capabilities with z/OS-specific features
+including colorized terminal output, EBCDIC and ASCII file tag awareness
+(\fBchtag\fR), extended attribute inspection (\fBextattr\fR), POSIX ACL
+indicator detection (\fB+\fR), zFS dataset resolution (\fBdf\fR), and Git
+repository integration.
+.PP
+In addition to a traditional command-line interface,
+.B zoseza
+provides an interactive full-screen Text User Interface (TUI) for
+browsing, sorting, filtering, inspecting, editing, and managing files
+directly on the mainframe.
 .SH POSITIONAL ARGUMENTS
-
 .TP
 .I paths
-One or more files or directories to display.
-
+One or more files or directories to display (default: current directory).
 .SH OPTIONS
-
 .TP
-.BR -h ", " --help
+.BR \-h ", " \-\-help
 Display help information and exit.
-
 .TP
-.BR -a ", " --all
-Show hidden files.
-
+.BR \-a ", " \-\-all
+Show hidden files (entries starting with \fB.\fR). The parent directory
+(\fB..\fR) is pinned to the top of directory listings.
 .TP
-.BR -l ", " --long
-Display detailed file information.
-
+.BR \-l ", " \-\-long
+Display extended metadata (permissions, ACL indicator, hard links, owner,
+group, size, and timestamp).
 .TP
-.BR -g ", " --git
-Display Git status information.
-
+.BR \-g ", " \-\-git
+Display Git status badges for entries and show the active Git branch in
+directory headers.
 .TP
-.BR -t ", " --time
-Sort entries by modification time.
-
+.BR \-t ", " \-\-time
+Sort entries by modification time (newest first). Combine with \fB\-u\fR
+or \fB\-c\fR to sort by access or status change time.
 .TP
-.BR -u ", " --access
-Use last access time.
-
+.BR \-u ", " \-\-access
+Display last access time (\fBatime\fR) in long view, and sort by access
+time when combined with \fB\-t\fR.
 .TP
-.BR -c ", " --ctime
-Use status change time.
-
+.BR \-c ", " \-\-ctime
+Display status change time (\fBctime\fR) in long view, and sort by status
+change time when combined with \fB\-t\fR.
 .TP
-.BR -i ", " --icons
-Display file type icons.
-
+.BR \-i ", " \-\-icons
+Display Nerd Font file-type icons next to filenames.
 .TP
-.B --inode
-Display inode numbers.
-
+.B \-\-inode
+Display the file serial number (inode).
 .TP
-.BR -O ", " --octal
-Display permissions in octal format.
-
+.BR \-O ", " \-\-octal
+Display file permissions in 4-digit octal format alongside symbolic
+permissions in long view.
 .TP
-.BR -n ", " --numeric
-Display numeric user and group IDs.
-
+.BR \-n ", " \-\-numeric
+Display numeric user IDs (UID) and group IDs (GID) instead of resolved
+names.
 .TP
-.BR -b ", " --blocks
-Display block allocation information.
-
+.BR \-b ", " \-\-blocks
+Calculate and display file sizes using 512-byte block allocations
+instead of exact byte counts.
 .TP
-.BR -J ", " --json " " FILE
-Write output in JSON format to FILE.
-
+.BI "\-J, \-\-json " FILE
+Export the directory listing and metadata as structured JSON to \fIFILE\fR.
 .TP
-.BR -e ", " --ext " " EXT
-Show only files matching the specified extension.
-
+.BI "\-e, \-\-ext " EXT
+Filter files by a comma-separated list of file extensions (for example,
+\fBtxt,rex,py\fR). Directories are still shown during traversal.
 .TP
-.BR -R ", " --regex " " PATTERN
-Filter entries using a regular expression.
-
+.BI "\-R, \-\-regex " PATTERN
+Filter files matching the specified regular expression \fIPATTERN\fR.
 .TP
-.BR -T ", " --tags
-Display z/OS file tag information obtained from
-.BR chtag .
-
+.BR \-T ", " \-\-tags
+Display z/OS USS file tag state (\fBt\fR, \fBb\fR, \fBm\fR, \fB\-\fR)
+and character codeset (such as \fBIBM-1047\fR or \fBISO8859-1\fR).
 .TP
-.BR -x ", " --extattr
-Display z/OS extended file attributes.
-
+.BR \-x ", " \-\-extattr
+Display z/OS extended attributes in \fB[apsl]\fR badge format (APF
+authorized, program controlled, shared address space, shared library).
 .TP
-.B --tree
-Display directories in tree format.
-
+.B \-\-tree
+Display directories and their contents in a recursive tree hierarchy.
 .TP
-.BR -d ", " --directory
+.BR \-d ", " \-\-directory
 List directories themselves rather than their contents.
-
 .TP
-.BR -S ", " --sort-size
-Sort entries by file size.
-
+.BR \-S ", " \-\-sort\-size
+Sort entries by file size (largest first).
 .TP
-.BR -r ", " --reverse
-Reverse sort order.
-
+.BR \-r ", " \-\-reverse
+Reverse the active sort order.
 .TP
-.BR -1 ", " --oneline
+.BR \-1 ", " \-\-oneline
 Display one entry per line.
-
 .TP
-.BR -D ", " --dsn
-Show underlying zFS dataset names.
-
+.BR \-D ", " \-\-dsn
+Show underlying zFS dataset names in brackets for directories, files,
+and symlinks.
 .TP
-.BI --color " {auto|always|never}"
-Control colorized output.
-
+.BI "\-\-color " WHEN
+Specify when to use terminal colors: \fBauto\fR (default; colors enabled
+only on TTY output), \fBalways\fR, or \fBnever\fR.
 .TP
-.B --no-color
-Disable all terminal colors.
-
+.B \-\-no\-color
+Disable all terminal colors (alias for \fB\-\-color=never\fR).
 .TP
-.BR -v ", " --version
-Display version information and exit.
-
+.BR \-v ", " \-\-version
+Display program version information and exit.
 .TP
-.B --tui
-Launch the interactive Text User Interface.
-
+.B \-\-tui
+Launch the interactive full-screen curses Text User Interface.
+.SH TUI HOTKEYS
+When running with \fB\-\-tui\fR, the following interactive keys are available:
+.TP
+.B UP / DOWN
+Move the selection cursor up or down.
+.TP
+.B ENTER
+Enter the selected directory or open the selected file in the built-in
+read-only viewer.
+.TP
+.B ESC
+Navigate up to the parent directory, or close active sub-views.
+.TP
+.B i
+Open the full-screen File Info inspector showing complete POSIX metadata,
+z/OS file tags, extended attributes, ACL entries, zFS dataset, mount
+point, timestamps, and Git status.
+.TP
+.B e
+Edit the selected file using the configured editor (\fB$EDITOR\fR or
+\fBvi\fR).
+.TP
+.B D / R / C
+Delete (\fBD\fR), Rename (\fBR\fR), or Copy (\fBC\fR) the selected file
+or directory.
+.TP
+.B s / t / a / C / n / r
+Sort entries by Size (\fBs\fR), MTime (\fBt\fR), ATime (\fBa\fR), CTime
+(\fBC\fR), Name (\fBn\fR), or Reverse the current sort (\fBr\fR).
+.TP
+.B I / O / N
+Toggle display of Inode numbers (\fBI\fR), Octal permissions (\fBO\fR),
+or Numeric UIDs/GIDs (\fBN\fR).
+.TP
+.B f \fRor\fB /
+Filter the current directory listing by substring. Press \fBc\fR to
+clear the active filter.
+.TP
+.B o
+Open the interactive Settings menu to customize colors and default editor.
+.TP
+.B F1
+Display the built-in TUI help screen.
+.TP
+.B q
+Quit the current view or exit the TUI.
+.SH ENVIRONMENT
+.TP
+.B NO_COLOR
+When set (to any value), disables all ANSI and curses color output unless
+overridden.
+.TP
+.B LS_COLORS
+Colon-separated list of ANSI color mappings (\fBdi\fR, \fBex\fR, \fBln\fR,
+\fBfi\fR) used to customize CLI colors.
+.TP
+.B EDITOR
+Default text editor command used by the TUI \fBe\fR hotkey if not
+overridden in \fI~/.pyeza.json\fR.
 .SH FILES
-
 .TP
 .I ~/.pyeza.json
-User preferences and TUI configuration file.
-
+User preferences and TUI configuration file storing custom color pairs
+and default editor command.
+.SH EXIT STATUS
+.TP
+.B 0
+Successful execution.
+.TP
+.B 1
+Command-line argument or regular expression compilation error.
+.TP
+.B 130
+Execution interrupted by the user (\fBCtrl+C\fR / \fBSIGINT\fR).
 .SH EXAMPLES
-
 .TP
-List files in the current directory:
 .B zoseza.py
-
+List files in the current directory in a multi-column grid.
 .TP
-Show hidden files with long output:
-.B zoseza.py -al
-
+.B zoseza.py \-laTgD
+Show all files in long format with Git status, z/OS file tags, and
+underlying zFS dataset names.
 .TP
-Display Git status information:
-.B zoseza.py -g
-
+.B zoseza.py \-tx \-e rex,py
+List REXX and Python files sorted by newest modification time alongside
+z/OS extended attributes.
 .TP
-Show file tags and extended attributes:
-.B zoseza.py -T -x
-
+.B zoseza.py \-\-tree
+Display a recursive directory tree.
 .TP
-Display a directory tree:
-.B zoseza.py --tree
-
-.TP
-Launch the TUI:
-.B zoseza.py --tui
-
+.B zoseza.py \-\-tui
+Launch the interactive full-screen Text User Interface.
 .SH SEE ALSO
-
 .BR ls (1),
-.BR eza (1),
 .BR chtag (1),
-.BR extattr (1)
-
+.BR extattr (1),
+.BR df (1),
+.BR getfacl (1)
 .SH AUTHOR
-
-zoseza was developed for IBM z/OS UNIX System Services users seeking a modern, feature-rich alternative to traditional file listing tools.
-
+Developed by Lionel B. Dyck for IBM z/OS UNIX System Services users
+seeking a modern, feature-rich alternative to traditional file listing
+tools.
 .SH COPYRIGHT
-
-Copyright (C) 2026.
-Licensed under the terms provided with the project.
+Copyright (C) 2026 Lionel B. Dyck.
+Licensed under the MIT License (SPDX-License-Identifier: MIT).
