@@ -48,6 +48,7 @@ TUI Hotkeys:
   o       : Open settings
 
 Change History:
+  2026-11-16: Restored missing get_git_branch function.
   2026-11-16: Added standard UNIX ls extensions: --inode, -O (octal), -n (numeric IDs).
   2026-11-16: Added alternate timestamp sorting: -u (access time) and -c (change time).
   2026-11-16: Implemented dynamic ACL (+) detection by parsing background ls output.
@@ -85,11 +86,11 @@ COLORS = {
 }
 
 ICONS = {
-    'dir': '', 'symlink': '', 'exe': '', 'py': '󰌠',
-    'rex': '󱁤', 'rexx': '󱁤', 'sh': '', 'txt': '',
-    'md': '', 'jcl': '󰧮', 'c': '', 'cpp': '',
-    'h': '', 'json': '', 'xml': '󰗀', 'csv': '󰈙',
-    'zip': '', 'tar': '', 'gz': '', 'default': ''
+    'dir': '\uf115', 'symlink': '\uf481', 'exe': '\uf489', 'py': '\U000f0320',
+    'rex': '\U000f1064', 'rexx': '\U000f1064', 'sh': '\uf489', 'txt': '\uf15c',
+    'md': '\uf48a', 'jcl': '\U000f09ee', 'c': '\ue61e', 'cpp': '\ue61d',
+    'h': '\uf0fd', 'json': '\ue60b', 'xml': '\U000f05c0', 'csv': '\U000f0219',
+    'zip': '\uf410', 'tar': '\uf410', 'gz': '\uf410', 'default': '\uf15b'
 }
 
 # ==============================================================================
@@ -392,7 +393,7 @@ def format_entry(entry, st, path, rel_path, g_stats, tags, x_stats, acls, args,
         try:
             target = os.readlink(path)
             t_col = COLORS['dsn'] if target.startswith('//') else COLORS['symlink']
-            sym_tgt = f"  {t_col}{target}{COLORS['reset']}"
+            sym_tgt = f" \uf178 {t_col}{target}{COLORS['reset']}"
             tgt_vis_len += 3 + len(target)
         except OSError: pass
 
@@ -486,7 +487,7 @@ def process_directory(target_dir, args, g_stats, prefix="", r_base="", root=True
     for i, (entry, st, path) in enumerate(entries_with_stats):
         is_last = (i == len(entries_with_stats) - 1)
         rel_path = os.path.join(r_base, entry) if r_base else entry
-        t_conn = "└── " if (args.tree and is_last) else "├── " if args.tree else ""
+        t_conn = "\u2514\u2500\u2500 " if (args.tree and is_last) else "\u251c\u2500\u2500 " if args.tree else ""
         
         full_prefix = prefix + t_conn
         fmt_str, vlen = format_entry(
@@ -502,7 +503,7 @@ def process_directory(target_dir, args, g_stats, prefix="", r_base="", root=True
         )
             
         if args.tree and stat.S_ISDIR(st.st_mode) and entry != '..':
-            extension = "    " if is_last else "│   "
+            extension = "    " if is_last else "\u2502   "
             children = process_directory(
                 path, args, g_stats, prefix + extension, rel_path, root=False
             )
@@ -841,7 +842,7 @@ def tui_loop(stdscr, start_paths, args):
         
         col_hdr = get_header_str(args, force_long=True)
         stdscr.addstr(1, 0, col_hdr[:w-1].ljust(w-1), curses.A_BOLD)
-        stdscr.addstr(2, 0, "─" * (w-1), curses.A_NORMAL)
+        stdscr.addstr(2, 0, "\u2500" * (w-1), curses.A_NORMAL)
         
         for i in range(list_h):
             if top_idx + i < len(items):
@@ -1095,7 +1096,7 @@ def main():
             if args.git:
                 branch = get_git_branch(path)
                 if branch:
-                    b_fmt = f"{COLORS['branch']} {branch}{COLORS['reset']}"
+                    b_fmt = f"{COLORS['branch']}\ue0a0 {branch}{COLORS['reset']}"
                     header += f" on {b_fmt}"
                     path_dict["git_branch"] = branch
             print(f"{header}:")
@@ -1122,3 +1123,4 @@ if __name__ == '__main__':
         main()
     except KeyboardInterrupt:
         sys.exit(130)
+
