@@ -14,14 +14,16 @@ It features both a standard CLI format and an interactive full-screen Text User 
 
 You can run the utility directly from the shell or with Python 3:
 
-```bash
+```
 ./zoseza.py [OPTIONS] [PATHS...]
+
 ```
 
 Or configure a convenient shell alias or symlink in your `PATH`:
 
-```bash
+```
 alias zoseza='/path/to/zoseza/zoseza.py'
+
 ```
 
 ## CLI Options
@@ -54,49 +56,77 @@ alias zoseza='/path/to/zoseza/zoseza.py'
 | `--color WHEN` | When to use terminal colors: `auto`, `always`, `never` (default: `auto`). | 
 | `--no-color` | Disable all terminal colors (alias for `--color=never`). Also respects the `NO_COLOR` environment variable. | 
 | `--tui` | Launch the interactive fullscreen Text User Interface. | 
+| `-v`, `--version` | Show program's version number and exit. | 
+| `-h`, `--help` | Show the CLI help message and exit. | 
 
 ## TUI Hotkeys
 
 **Navigation & System**
 
 * **`UP/DOWN`** : Navigate
+
 * **`ENTER`** : Open Dir/File
+
 * **`ESC`** : Go up one dir
+
 * **`o`** : Open settings (colors/editor)
+
 * **`F1`** : Show help tutorial
+
 * **`q`** : Quit
 
 **Sorting & Filtering**
 
 * **`s/t/a/C/n/r`** : Sort (Size / MTime / ATime / CTime / Name / Reverse)
+
 * **`f`** or **`/`** : Filter by string
+
 * **`c`** : Clear filter
 
 **View Toggles**
 
 * **`I`** : Toggle Inode visibility
+
 * **`O`** : Toggle Octal permissions
+
 * **`N`** : Toggle Numeric UIDs/GIDs
 
 **File Operations**
 
 * **`e`** : Edit file
+
 * **`D/R/C`** : Delete / Rename / Copy
 
 ## Change History
 
+* **2026-11-17**: Added `-v` / `--version` flag and descriptive `--help` strings for all CLI options.
+
 * **2026-11-17**: Added `--color` (`auto`, `always`, `never`), `--no-color`, and `NO_COLOR` environment variable support.
+
 * **2026-11-16**: Added polyglot shell/Python `exec` header for direct execution while maintaining ASCII `vim` compatibility.
+
 * **2026-11-16**: Streamlined documentation to focus on direct execution and shell aliases.
+
 * **2026-11-16**: Restored missing `get_git_branch` function.
+
 * **2026-11-16**: Added standard UNIX ls extensions: `--inode`, `-O` (octal), `-n` (numeric IDs).
+
 * **2026-11-16**: Added alternate timestamp sorting: `-u` (access time) and `-c` (change time).
+
 * **2026-11-16**: Implemented dynamic ACL (`+`) detection by parsing background `ls` output.
+
 * **2026-11-16**: Added TUI runtime toggles for Inode (`I`), Octal (`O`), and Numeric (`N`) views.
+
 * **2026-11-16**: Added clean KeyboardInterrupt exit to suppress Ctrl+C tracebacks.
+
 * **2026-11-16**: Fixed `-D` (dataset) display for files and implemented zFS mount point caching.
+
 * **2026-11-16**: Added dynamic column headers (CLI/TUI) and TUI horizontal separator.
+
 * **2026-11-16**: Added TUI support for shell globbing (e.g., `zoseza --tui z*`).
+
 * **2026-11-16**: Removed `.` from lists; explicitly pinned `..` to the top of all sorts.
+
 * **2026-11-15**: Initial TUI integration with colorized views and basic navigation.
+
 * **2026-11-14**: Initial CLI layout, z/OS specific integrations, and sorting capabilities.

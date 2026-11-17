@@ -40,6 +40,7 @@ CLI Options:
   --color WHEN          When to use terminal colors: auto, always, never (default: auto).
   --no-color            Disable all terminal colors (alias for --color=never).
   --tui                 Launch the interactive fullscreen Text User Interface.
+  -v, --version         Show program's version number and exit.
 
 TUI Hotkeys:
   UP/DOWN : Navigate              s/t/a/C : Sort (Size/MTime/ATime/CTime)
@@ -51,7 +52,9 @@ TUI Hotkeys:
   o       : Open settings
 
 Change History:
+  2026-11-17: Added -v / --version flag and explicit CLI help descriptions.
   2026-11-17: Added --color (auto/always/never) and --no-color CLI options.
+  2026-11-16: Added polyglot shell/Python exec header for direct ASCII execution.
   2026-11-16: Restored missing get_git_branch function.
   2026-11-16: Added standard UNIX ls extensions: --inode, -O (octal), -n (numeric IDs).
   2026-11-16: Added alternate timestamp sorting: -u (access time) and -c (change time).
@@ -77,6 +80,7 @@ import curses
 from datetime import datetime
 
 CMD_NAME = os.path.basename(sys.argv[0])
+VERSION = "1.2.0 (2026-11-17)"
 
 # ANSI Color Codes
 COLORS = {
@@ -978,34 +982,36 @@ def main():
     apply_ls_colors() 
     
     parser = argparse.ArgumentParser(description="Python eza clone for z/OS (TUI Config saved to ~/.pyeza.json)")
-    parser.add_argument('paths', nargs='*', default=['.'])
-    parser.add_argument('-a', '--all', action='store_true')
-    parser.add_argument('-l', '--long', action='store_true')
-    parser.add_argument('-g', '--git', action='store_true')
-    parser.add_argument('-t', '--time', action='store_true')
-    parser.add_argument('-u', '--access', action='store_true')
-    parser.add_argument('-c', '--ctime', action='store_true')
-    parser.add_argument('-i', '--icons', action='store_true')
-    parser.add_argument('--inode', action='store_true')
-    parser.add_argument('-O', '--octal', action='store_true')
-    parser.add_argument('-n', '--numeric', action='store_true')
-    parser.add_argument('-b', '--blocks', action='store_true')
-    parser.add_argument('-J', '--json', metavar='FILE')
-    parser.add_argument('-e', '--ext', metavar='EXT')
-    parser.add_argument('-R', '--regex', metavar='PATTERN')
-    parser.add_argument('-T', '--tags', action='store_true')
-    parser.add_argument('-x', '--extattr', action='store_true')
-    parser.add_argument('--tree', action='store_true')
-    parser.add_argument('-d', '--directory', action='store_true')
-    parser.add_argument('-S', '--sort-size', action='store_true')
-    parser.add_argument('-r', '--reverse', action='store_true')
-    parser.add_argument('-1', '--oneline', action='store_true')
-    parser.add_argument('-D', '--dsn', action='store_true', help="Show underlying zFS dataset names")
+    parser.add_argument('paths', nargs='*', default=['.'], help="Files or directories to list (default: current directory)")
+    parser.add_argument('-a', '--all', action='store_true', help="Show hidden files (starting with .)")
+    parser.add_argument('-l', '--long', action='store_true', help="Display extended metadata (perms, links, owner, group, size, time)")
+    parser.add_argument('-g', '--git', action='store_true', help="Show Git status badges and the current branch")
+    parser.add_argument('-t', '--time', action='store_true', help="Sort by modification time (newest first)")
+    parser.add_argument('-u', '--access', action='store_true', help="Sort/display by last access time (atime)")
+    parser.add_argument('-c', '--ctime', action='store_true', help="Sort/display by status change time (ctime)")
+    parser.add_argument('-i', '--icons', action='store_true', help="Display Nerd Font icons next to filenames")
+    parser.add_argument('--inode', action='store_true', help="Display the file serial number (inode)")
+    parser.add_argument('-O', '--octal', action='store_true', help="Display file permissions in octal format")
+    parser.add_argument('-n', '--numeric', action='store_true', help="List numeric UIDs and GIDs instead of names")
+    parser.add_argument('-b', '--blocks', action='store_true', help="Display file sizes in 512-byte blocks instead of bytes")
+    parser.add_argument('-J', '--json', metavar='FILE', help="Export directory listing data to a specified JSON file")
+    parser.add_argument('-e', '--ext', metavar='EXT', help="Filter by comma-separated file extensions (e.g., txt,rex,c)")
+    parser.add_argument('-R', '--regex', metavar='PATTERN', help="Filter files matching a regular expression")
+    parser.add_argument('-T', '--tags', action='store_true', help="Display z/OS file tags (state, codeset)")
+    parser.add_argument('-x', '--extattr', action='store_true', help="Display z/OS extended attributes (APF, program control, etc.)")
+    parser.add_argument('--tree', action='store_true', help="Display output in a recursive tree topology")
+    parser.add_argument('-d', '--directory', action='store_true', help="List directories themselves, not their contents")
+    parser.add_argument('-S', '--sort-size', action='store_true', help="Sort files by size (largest first)")
+    parser.add_argument('-r', '--reverse', action='store_true', help="Reverse the current sort order")
+    parser.add_argument('-1', '--oneline', action='store_true', help="Display one entry per line")
+    parser.add_argument('-D', '--dsn', action='store_true', help="Show underlying zFS dataset names for directories and symlinks")
     parser.add_argument('--color', choices=['auto', 'always', 'never'], default='auto',
                         help="When to use terminal colors (auto, always, never)")
     parser.add_argument('--no-color', action='store_true',
                         help="Disable all terminal colors (same as --color=never)")
-    parser.add_argument('--tui', action='store_true')
+    parser.add_argument('--tui', action='store_true', help="Launch the interactive fullscreen Text User Interface")
+    parser.add_argument('-v', '--version', action='version', version=f"%(prog)s {VERSION}",
+                        help="Show program's version number and exit")
     
     args = parser.parse_args()
     
@@ -1147,4 +1153,3 @@ if __name__ == '__main__':
         main()
     except KeyboardInterrupt:
         sys.exit(130)
-
