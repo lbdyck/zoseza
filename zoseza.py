@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
+"exec" "python3" "$0" "$@"
 # SPDX-License-Identifier: MIT
 """
 zoseza.py (Python eza clone for z/OS)
 
 Description:
-  A feature-rich Python clone of the `eza` (modern ls) utility specifically tailored 
+  A feature-rich Python clone of the eza (modern ls) utility specifically tailored 
   for IBM z/OS UNIX System Services (USS). It provides robust colorized terminal output, 
   native EBCDIC/ASCII tag support (chtag), extended attribute inspection (extattr), 
   zFS dataset resolution, and Git status integration. 
@@ -36,6 +37,8 @@ CLI Options:
   -r, --reverse         Reverse the current sort order.
   -1, --oneline         Display one entry per line.
   -D, --dsn             Show underlying zFS dataset names for directories and symlinks.
+  --color WHEN          When to use terminal colors: auto, always, never (default: auto).
+  --no-color            Disable all terminal colors (alias for --color=never).
   --tui                 Launch the interactive fullscreen Text User Interface.
 
 TUI Hotkeys:
@@ -48,6 +51,7 @@ TUI Hotkeys:
   o       : Open settings
 
 Change History:
+  2026-11-17: Added --color (auto/always/never) and --no-color CLI options.
   2026-11-16: Restored missing get_git_branch function.
   2026-11-16: Added standard UNIX ls extensions: --inode, -O (octal), -n (numeric IDs).
   2026-11-16: Added alternate timestamp sorting: -u (access time) and -c (change time).
@@ -134,6 +138,10 @@ def apply_ls_colors():
         if '=' in part:
             key, val = part.split('=', 1)
             if key in mapping: COLORS[mapping[key]] = f'\033[{val}m'
+
+def disable_ansi_colors():
+    for k in COLORS:
+        COLORS[k] = ''
 
 # ==============================================================================
 # Core File Logic
@@ -701,7 +709,8 @@ def tui_loop(stdscr, start_paths, args):
     stdscr.keypad(True)
     
     config = load_config()
-    if curses.has_colors():
+    use_tui_color = getattr(args, 'use_color', True) and curses.has_colors()
+    if use_tui_color:
         curses.start_color()
         curses.use_default_colors()
         apply_curses_colors(config)
@@ -938,8 +947,9 @@ def tui_loop(stdscr, start_paths, args):
             if new_cfg:
                 config = new_cfg
                 save_config(config)
-                apply_curses_colors(config)
-                sync_ansi_colors(config)
+                if use_tui_color:
+                    apply_curses_colors(config)
+                    sync_ansi_colors(config)
                 prev_dir = None 
         elif k == ord('e'):
             sel = items[sel_idx]
@@ -991,9 +1001,23 @@ def main():
     parser.add_argument('-r', '--reverse', action='store_true')
     parser.add_argument('-1', '--oneline', action='store_true')
     parser.add_argument('-D', '--dsn', action='store_true', help="Show underlying zFS dataset names")
+    parser.add_argument('--color', choices=['auto', 'always', 'never'], default='auto',
+                        help="When to use terminal colors (auto, always, never)")
+    parser.add_argument('--no-color', action='store_true',
+                        help="Disable all terminal colors (same as --color=never)")
     parser.add_argument('--tui', action='store_true')
     
     args = parser.parse_args()
+    
+    if args.no_color or args.color == 'never' or 'NO_COLOR' in os.environ:
+        args.use_color = False
+    elif args.color == 'always':
+        args.use_color = True
+    else:
+        args.use_color = sys.stdout.isatty()
+        
+    if not args.use_color:
+        disable_ansi_colors()
     
     if args.tui:
         curses.wrapper(tui_loop, args.paths, args)
@@ -1028,7 +1052,7 @@ def main():
         
         if args.long or args.tree or args.oneline:
             hdr_str = get_header_str(args)
-            print(f"\033[1;4m{hdr_str}\033[0m")
+            print(f"\033[1;4m{hdr_str}\033[0m" if args.use_color else hdr_str)
         
         for path in file_paths:
             try:
@@ -1103,7 +1127,7 @@ def main():
         
         if args.long or args.tree or args.oneline:
             hdr_str = get_header_str(args)
-            print(f"\033[1;4m{hdr_str}\033[0m")
+            print(f"\033[1;4m{hdr_str}\033[0m" if args.use_color else hdr_str)
             
         g_stats = get_git_statuses_recursive(path) if args.git else {}
         path_dict["contents"] = process_directory(path, args, g_stats)
