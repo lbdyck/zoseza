@@ -47,12 +47,13 @@ TUI Hotkeys:
   ENTER   : Open Dir/File         n/r     : Sort (Name/Reverse)
   ESC     : Go up one dir         f or /  : Filter by string
   e       : Edit file             i       : Inspect full file details
-  D/R/C   : Delete/Rename/Copy    I/O/N   : Toggle Inode/Octal/Numeric IDs
-  c       : Clear filter
-  q       : Quit                  F1      : Show help tutorial
-  o       : Open settings
+  D/R/C   : Delete/Rename/Copy    v       : Columns Menu (Add/Remove Columns)
+  I/O/N   : Toggle Inode/Octal/ID G/T/X/M : Toggle Git/Tags/ExtAttr/Dataset
+  c       : Clear filter          F1      : Show help tutorial
+  q       : Quit                  o       : Open settings
 
 Change History:
+  2026-11-18: Added interactive TUI Columns Menu ('v') and hotkeys to add or remove any display column.
   2026-11-18: Colorized TUI F1 help screens and added centered popup modals for Copy, Rename, and Delete.
   2026-11-17: Added 'i' hotkey in TUI to display comprehensive file metadata and z/OS attributes.
   2026-11-17: Added -v / --version option, --color (auto/always/never), and --no-color CLI options.
@@ -80,7 +81,7 @@ import re
 import curses
 from datetime import datetime
 
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 CMD_NAME = os.path.basename(sys.argv[0])
 
 # ANSI Color Codes
@@ -309,14 +310,14 @@ def get_header_str(args, force_long=False):
         out += f"{'Inode':<10} "
     if args.long or force_long:
         if args.octal: out += f"{'Octal':<5} "
-        out += f"{'Permissions':<11} "
-        out += f"{'Ln':>2} "
-        out += f"{'User':<8} "
-        out += f"{'Group':<8} "
-        out += f"{'Size':>5} "
-        
-        time_lbl = "Accessed" if args.access else "Changed" if args.ctime else "Modified"
-        out += f"{time_lbl:<12} "
+        if getattr(args, 'show_perms', True): out += f"{'Permissions':<11} "
+        if getattr(args, 'show_links', True): out += f"{'Ln':>2} "
+        if getattr(args, 'show_user', True): out += f"{'User':<8} "
+        if getattr(args, 'show_group', True): out += f"{'Group':<8} "
+        if getattr(args, 'show_size', True): out += f"{'Size':>5} "
+        if getattr(args, 'show_time', True):
+            time_lbl = "Accessed" if args.access else "Changed" if args.ctime else "Modified"
+            out += f"{time_lbl:<12} "
     
     if args.git: out += f"{'Git':<3}"
     if args.tags: out += f"{'Tag Info':<13}"
@@ -427,12 +428,18 @@ def format_entry(entry, st, path, rel_path, g_stats, tags, x_stats, acls, args,
         
         out = inode_str
         if args.octal: out += octal_str
-        out += f"{COLORS['perms']}{perms}{COLORS['reset']} "
-        out += f"{links:2} "
-        out += f"{COLORS['user']}{user:<8}{COLORS['reset']} "
-        out += f"{COLORS['group']}{group:<8}{COLORS['reset']} "
-        out += f"{COLORS['size']}{size_str:>5}{COLORS['reset']} "
-        out += f"{COLORS['time']}{time_str}{COLORS['reset']} "
+        if getattr(args, 'show_perms', True):
+            out += f"{COLORS['perms']}{perms}{COLORS['reset']} "
+        if getattr(args, 'show_links', True):
+            out += f"{links:2} "
+        if getattr(args, 'show_user', True):
+            out += f"{COLORS['user']}{user:<8}{COLORS['reset']} "
+        if getattr(args, 'show_group', True):
+            out += f"{COLORS['group']}{group:<8}{COLORS['reset']} "
+        if getattr(args, 'show_size', True):
+            out += f"{COLORS['size']}{size_str:>5}{COLORS['reset']} "
+        if getattr(args, 'show_time', True):
+            out += f"{COLORS['time']}{time_str}{COLORS['reset']} "
         out += f"{git_badge}{tag_badge}{x_badge}"
         out += f"{COLORS['tree_line']}{t_pfx}{COLORS['reset']}"
         out += f"{color}{icon}{entry}{COLORS['reset']}{sym_tgt}"
@@ -659,6 +666,127 @@ def popup_message(stdscr, title, message, is_error=True):
     win.addstr(4, max(2, (box_w - len(hint)) // 2), hint[:box_w - 4], curses.A_DIM)
     win.refresh()
     win.getch()
+
+def popup_columns(stdscr, args, use_color=True):
+    col_defs = [
+        ('inode',      'Inode Number',          'I'),
+        ('octal',      'Octal Permissions',     'O'),
+        ('show_perms', 'Symbolic Permissions',  'P'),
+        ('show_links', 'Hard Links (Ln)',       'L'),
+        ('show_user',  'Owner / User',          'U'),
+        ('show_group', 'Group Name',            'K'),
+        ('numeric',    'Numeric UID / GID',     'N'),
+        ('show_size',  'File Size',             'S'),
+        ('blocks',     'Size in 512B Blocks',   'B'),
+        ('show_time',  'Timestamp Column',      'E'),
+        ('git',        'Git Status Badge',      'G'),
+        ('tags',       'z/OS File Tags (chtag)','T'),
+        ('extattr',    'z/OS ExtAttr [apsl]',   'X'),
+        ('icons',      'Nerd Font Icons',       'W'),
+        ('dsn',        'zFS Dataset Name',      'M'),
+    ]
+    sel_idx = 0
+
+    while True:
+        h, w = stdscr.getmaxyx()
+        box_h = min(len(col_defs) + 6, max(10, h - 2))
+        box_w = min(54, max(32, w - 4))
+        start_y = max(0, (h - box_h) // 2)
+        start_x = max(0, (w - box_w) // 2)
+
+        win = curses.newwin(box_h, box_w, start_y, start_x)
+        win.keypad(True)
+        has_c = use_color and curses.has_colors()
+
+        b_attr = (curses.color_pair(3) | curses.A_BOLD) if has_c else curses.A_BOLD
+        on_attr = (curses.color_pair(2) | curses.A_BOLD) if has_c else curses.A_BOLD
+        off_attr = (curses.color_pair(5) | curses.A_BOLD) if has_c else curses.A_NORMAL
+        txt_attr = (curses.color_pair(7) | curses.A_BOLD) if has_c else curses.A_NORMAL
+        key_attr = (curses.color_pair(6) | curses.A_BOLD) if has_c else curses.A_BOLD
+
+        win.attron(b_attr)
+        win.box()
+        win.attroff(b_attr)
+
+        t_str = " TUI Columns (Add / Remove) "
+        win.addstr(0, max(2, (box_w - len(t_str)) // 2), t_str[:box_w - 4], b_attr | curses.A_REVERSE)
+        sub_str = "SPACE/ENTER: Toggle | a: All | d: Default | q/ESC: Close"
+        win.addstr(1, max(2, (box_w - len(sub_str)) // 2), sub_str[:box_w - 4], b_attr)
+        win.addstr(2, 2, "\u2500" * (box_w - 4), b_attr)
+
+        list_h = box_h - 5
+        top_i = max(0, min(sel_idx - list_h + 1, len(col_defs) - list_h)) if sel_idx >= list_h else 0
+
+        for idx in range(list_h):
+            c_i = top_i + idx
+            if c_i >= len(col_defs):
+                break
+            attr_name, label, hk = col_defs[c_i]
+            enabled = bool(getattr(args, attr_name, True))
+            is_sel = (c_i == sel_idx)
+
+            row_y = 3 + idx
+            chk = "[x]" if enabled else "[ ]"
+            ptr = ">" if is_sel else " "
+            c_attr = on_attr if enabled else off_attr
+            l_attr = txt_attr
+
+            if is_sel:
+                win.addstr(row_y, 2, " " * (box_w - 4), curses.A_REVERSE)
+                c_attr |= curses.A_REVERSE
+                l_attr |= curses.A_REVERSE
+                k_attr = key_attr | curses.A_REVERSE
+            else:
+                k_attr = key_attr
+
+            try:
+                win.addstr(row_y, 2, f" {ptr} {chk} ", c_attr)
+                win.addstr(row_y, 9, f"{label:<26}"[:box_w - 19], l_attr)
+                if box_w >= 44:
+                    win.addstr(row_y, box_w - 10, f"[{hk}]", k_attr)
+            except curses.error:
+                pass
+
+        ftr_hint = " Changes apply live to the directory browser "
+        win.addstr(box_h - 2, max(2, (box_w - len(ftr_hint)) // 2), ftr_hint[:box_w - 4], curses.A_DIM)
+        win.refresh()
+
+        k = win.getch()
+        if k == 27:
+            win.nodelay(True)
+            k2 = win.getch()
+            win.nodelay(False)
+            if k2 == -1:
+                break
+        elif k in (ord('q'), ord('Q'), ord('v'), ord('V')):
+            break
+        elif k == curses.KEY_UP:
+            sel_idx = max(0, sel_idx - 1)
+        elif k == curses.KEY_DOWN:
+            sel_idx = min(len(col_defs) - 1, sel_idx + 1)
+        elif k in (ord(' '), curses.KEY_ENTER, 10, 13):
+            attr_name = col_defs[sel_idx][0]
+            setattr(args, attr_name, not bool(getattr(args, attr_name, True)))
+        elif k in (ord('a'), ord('A')):
+            for attr_name, _, _ in col_defs:
+                setattr(args, attr_name, True)
+        elif k in (ord('d'), ord('D')):
+            defaults = {
+                'inode': False, 'octal': False, 'show_perms': True,
+                'show_links': True, 'show_user': True, 'show_group': True,
+                'numeric': False, 'show_size': True, 'blocks': False,
+                'show_time': True, 'git': False, 'tags': False,
+                'extattr': False, 'icons': False, 'dsn': False
+            }
+            for k_def, v_def in defaults.items():
+                setattr(args, k_def, v_def)
+        else:
+            ch = chr(k).upper() if 32 <= k <= 126 else ''
+            for c_i, (attr_name, _, hk) in enumerate(col_defs):
+                if ch == hk:
+                    sel_idx = c_i
+                    setattr(args, attr_name, not bool(getattr(args, attr_name, True)))
+                    break
 
 def show_help(stdscr, title, lines):
     h, w = stdscr.getmaxyx()
@@ -1127,6 +1255,10 @@ def tui_loop(stdscr, start_paths, args):
     sort_rev = args.reverse
     current_filter = ""
     
+    for col_attr in ('show_perms', 'show_links', 'show_user', 'show_group', 'show_size', 'show_time'):
+        if not hasattr(args, col_attr):
+            setattr(args, col_attr, True)
+
     items = []
     g_stats, tags, x_stats, acls = {}, {}, {}, {}
     
@@ -1153,10 +1285,11 @@ def tui_loop(stdscr, start_paths, args):
         "  f or /       : Filter by string",
         "  c            : Clear filter",
         "",
-        "View Toggles:",
-        "  I            : Toggle Inode visibility",
-        "  O            : Toggle Octal permissions",
-        "  N            : Toggle Numeric UIDs/GIDs",
+        "Column & View Toggles:",
+        "  v            : Open interactive Columns Menu (Add/Remove any column)",
+        "  I / O / N    : Toggle Inode / Octal perms / Numeric UID & GID",
+        "  G / T / X / M: Toggle Git / z/OS Tags / ExtAttr / zFS Dataset",
+        "  B / W        : Toggle 512B Blocks / Nerd Font Icons",
         "",
         "Settings:",
         "  o            : Change colors/editor",
@@ -1255,7 +1388,7 @@ def tui_loop(stdscr, start_paths, args):
                 )
                 addstr_ansi(stdscr, i + 3, 0, ansi_str, (top_idx + i == sel_idx), w)
                 
-        ftr = " q:Quit i:Info o:Opt D,R,C:Ops s,t,a,C,n,r:Srt I,O,N:Tgls f,c:Flt F1:Help "
+        ftr = " q:Quit i:Info v:Cols o:Opt D,R,C:Ops s,t,a,C,n,r:Srt f,c:Flt F1:Help "
         stdscr.addstr(h - 1, 0, ftr.ljust(w-1)[:w-1], curses.A_REVERSE)
         
         stdscr.nodelay(True)
@@ -1287,9 +1420,26 @@ def tui_loop(stdscr, start_paths, args):
         elif k == ord('C'): sort_by = 'ctime'; args.access = False; args.ctime = True
         elif k == ord('n'): sort_by = 'name'
         elif k == ord('r'): sort_rev = not sort_rev
+        elif k == ord('v') or k == ord('V'):
+            prev_g, prev_t, prev_x = args.git, args.tags, args.extattr
+            popup_columns(stdscr, args, use_tui_color)
+            if (args.git and not prev_g) or (args.tags and not prev_t) or (args.extattr and not prev_x):
+                prev_dir = None
         elif k == ord('I'): args.inode = not args.inode
         elif k == ord('O'): args.octal = not args.octal
         elif k == ord('N'): args.numeric = not args.numeric
+        elif k == ord('G'):
+            args.git = not args.git
+            if args.git and not g_stats: g_stats = get_git_statuses_recursive(current_dir)
+        elif k == ord('T'):
+            args.tags = not args.tags
+            if args.tags and not tags: tags = get_zos_tags(current_dir)
+        elif k == ord('X'):
+            args.extattr = not args.extattr
+            if args.extattr and not x_stats: x_stats = get_extattrs(current_dir, raw)
+        elif k == ord('M'): args.dsn = not args.dsn
+        elif k == ord('B'): args.blocks = not args.blocks
+        elif k == ord('W'): args.icons = not args.icons
         elif k == ord('c'): 
             current_filter = ""
             if explicit_files:

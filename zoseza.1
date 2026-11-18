@@ -1,4 +1,4 @@
-.TH ZOSEZA 1 "November 2026" "zoseza 1.4.0" "User Commands"
+.TH ZOSEZA 1 "November 2026" "zoseza 1.5.0" "User Commands"
 .SH NAME
 zoseza \- modern eza-inspired file listing utility for IBM z/OS USS
 .SH SYNOPSIS
@@ -21,8 +21,8 @@ repository integration.
 In addition to a traditional command-line interface,
 .B zoseza
 provides an interactive full-screen Text User Interface (TUI) for
-browsing, sorting, filtering, inspecting, editing, and managing files
-directly on the mainframe.
+browsing, sorting, filtering, dynamically adding or removing display
+columns, inspecting, editing, and managing files directly on the mainframe.
 .SH POSITIONAL ARGUMENTS
 .TP
 .I paths
@@ -154,16 +154,33 @@ input fields and confirmation prompts.
 Sort entries by Size (\fBs\fR), MTime (\fBt\fR), ATime (\fBa\fR), CTime
 (\fBC\fR), Name (\fBn\fR), or Reverse the current sort (\fBr\fR).
 .TP
+.B v
+Open the interactive TUI Columns Menu modal to dynamically add or remove
+any column (Inode, Octal, Permissions, Links, Owner, Group, Numeric IDs,
+Size, 512B Blocks, Timestamp, Git Status, z/OS File Tags, ExtAttr, Icons,
+and zFS Dataset). Press \fBSPACE\fR/\fBENTER\fR or the bracketed shortcut
+key to toggle a column, \fBa\fR to enable all columns, or \fBd\fR to
+reset to defaults.
+.TP
 .B I / O / N
 Toggle display of Inode numbers (\fBI\fR), Octal permissions (\fBO\fR),
 or Numeric UIDs/GIDs (\fBN\fR).
+.TP
+.B G / T / X / M
+Toggle display of Git status badges (\fBG\fR), z/OS File Tags (\fBT\fR),
+z/OS Extended Attributes (\fBX\fR), or zFS Dataset names (\fBM\fR) on the
+fly.
+.TP
+.B B / W
+Toggle 512-byte Block sizes (\fBB\fR) or Nerd Font Icons (\fBW\fR).
 .TP
 .B f \fRor\fB /
 Filter the current directory listing by substring. Press \fBc\fR to
 clear the active filter.
 .TP
 .B o
-Open the interactive Settings menu to customize colors and default editor.
+Open the colorized interactive Settings menu with live color previews and
+popup editor configuration.
 .TP
 .B F1
 Display the colorized built-in TUI help screen.
