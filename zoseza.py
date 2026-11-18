@@ -53,6 +53,7 @@ TUI Hotkeys:
   o       : Open settings
 
 Change History:
+  2026-11-18: Colorized TUI F1 help screens and added centered popup modals for Copy, Rename, and Delete.
   2026-11-17: Added 'i' hotkey in TUI to display comprehensive file metadata and z/OS attributes.
   2026-11-17: Added -v / --version option, --color (auto/always/never), and --no-color CLI options.
   2026-11-16: Restored missing get_git_branch function.
@@ -79,7 +80,7 @@ import re
 import curses
 from datetime import datetime
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 CMD_NAME = os.path.basename(sys.argv[0])
 
 # ANSI Color Codes
@@ -537,6 +538,11 @@ def apply_curses_colors(cfg):
         curses.init_pair(5, curses.COLOR_RED, -1)     
         curses.init_pair(6, curses.COLOR_MAGENTA, -1) 
         curses.init_pair(7, curses.COLOR_WHITE, -1)   
+        for c_idx in range(8):
+            try:
+                curses.init_pair(10 + c_idx, c_idx, -1)
+            except curses.error:
+                pass   
 
 def get_input(stdscr, y, w, prompt, default=""):
     stdscr.addstr(y, 0, prompt.ljust(w-1)[:w-1], curses.A_REVERSE)
@@ -550,68 +556,254 @@ def get_input(stdscr, y, w, prompt, default=""):
     except: pass
     return res
 
-def get_confirm(stdscr, y, w, prompt):
-    stdscr.addstr(y, 0, prompt.ljust(w-1)[:w-1], curses.A_REVERSE)
-    k = stdscr.getch()
-    return k in (ord('y'), ord('Y'))
+def popup_input(stdscr, title, prompt, default=""):
+    h, w = stdscr.getmaxyx()
+    box_w = min(max(len(prompt) + 16, 48), max(24, w - 4))
+    box_h = 7
+    start_y = max(0, (h - box_h) // 2)
+    start_x = max(0, (w - box_w) // 2)
+
+    win = curses.newwin(box_h, box_w, start_y, start_x)
+    win.keypad(True)
+    b_attr = (curses.color_pair(3) | curses.A_BOLD) if curses.has_colors() else curses.A_BOLD
+    win.attron(b_attr)
+    win.box()
+    win.attroff(b_attr)
+
+    t_str = f" {title} "
+    win.addstr(0, max(2, (box_w - len(t_str)) // 2), t_str[:box_w - 4], b_attr | curses.A_REVERSE)
+    win.addstr(2, 2, prompt[:box_w - 4], curses.A_BOLD)
+
+    field_w = box_w - 4
+    win.addstr(3, 2, " " * field_w, curses.A_REVERSE)
+    hint = "ENTER: Confirm | ESC: Cancel"
+    win.addstr(5, max(2, (box_w - len(hint)) // 2), hint[:box_w - 4], curses.A_DIM)
+
+    buf = list(default)
+    try: curses.curs_set(1)
+    except Exception: pass
+
+    while True:
+        disp = "".join(buf)[-(field_w - 1):]
+        win.addstr(3, 2, disp.ljust(field_w), curses.A_REVERSE)
+        win.move(3, 2 + min(len(disp), field_w - 1))
+        win.refresh()
+
+        k = win.getch()
+        if k == 27:
+            win.nodelay(True)
+            k2 = win.getch()
+            win.nodelay(False)
+            if k2 == -1:
+                try: curses.curs_set(0)
+                except Exception: pass
+                return None
+        elif k in (curses.KEY_ENTER, 10, 13):
+            try: curses.curs_set(0)
+            except Exception: pass
+            return "".join(buf).strip()
+        elif k in (curses.KEY_BACKSPACE, 127, 8):
+            if buf:
+                buf.pop()
+        elif 32 <= k <= 126:
+            buf.append(chr(k))
+
+def popup_confirm(stdscr, title, prompt):
+    h, w = stdscr.getmaxyx()
+    box_w = min(max(len(prompt) + 10, 44), max(24, w - 4))
+    box_h = 6
+    start_y = max(0, (h - box_h) // 2)
+    start_x = max(0, (w - box_w) // 2)
+
+    win = curses.newwin(box_h, box_w, start_y, start_x)
+    win.keypad(True)
+    b_attr = (curses.color_pair(5) | curses.A_BOLD) if curses.has_colors() else curses.A_BOLD
+    win.attron(b_attr)
+    win.box()
+    win.attroff(b_attr)
+
+    t_str = f" {title} "
+    win.addstr(0, max(2, (box_w - len(t_str)) // 2), t_str[:box_w - 4], b_attr | curses.A_REVERSE)
+    win.addstr(2, max(2, (box_w - len(prompt)) // 2), prompt[:box_w - 4], curses.A_BOLD)
+
+    hint = "Press [Y] to confirm or [N / ESC] to cancel"
+    win.addstr(4, max(2, (box_w - len(hint)) // 2), hint[:box_w - 4],
+               curses.color_pair(4) if curses.has_colors() else curses.A_NORMAL)
+    win.refresh()
+
+    while True:
+        k = win.getch()
+        if k in (ord('y'), ord('Y')):
+            return True
+        if k in (ord('n'), ord('N'), ord('q'), ord('Q'), 27):
+            return False
+
+def popup_message(stdscr, title, message, is_error=True):
+    h, w = stdscr.getmaxyx()
+    box_w = min(max(len(message) + 8, 42), max(24, w - 4))
+    box_h = 6
+    start_y = max(0, (h - box_h) // 2)
+    start_x = max(0, (w - box_w) // 2)
+
+    win = curses.newwin(box_h, box_w, start_y, start_x)
+    pair = 5 if is_error else 2
+    b_attr = (curses.color_pair(pair) | curses.A_BOLD) if curses.has_colors() else curses.A_BOLD
+    win.attron(b_attr)
+    win.box()
+    win.attroff(b_attr)
+
+    t_str = f" {title} "
+    win.addstr(0, max(2, (box_w - len(t_str)) // 2), t_str[:box_w - 4], b_attr | curses.A_REVERSE)
+    win.addstr(2, 2, message[:box_w - 4], curses.A_BOLD)
+    hint = "Press any key to continue"
+    win.addstr(4, max(2, (box_w - len(hint)) // 2), hint[:box_w - 4], curses.A_DIM)
+    win.refresh()
+    win.getch()
 
 def show_help(stdscr, title, lines):
     h, w = stdscr.getmaxyx()
     stdscr.clear()
-    
+    has_c = curses.has_colors()
+
+    hdr_attr = (curses.color_pair(3) | curses.A_REVERSE | curses.A_BOLD) if has_c else curses.A_REVERSE
+    sec_attr = (curses.color_pair(6) | curses.A_BOLD) if has_c else curses.A_BOLD
+    key_attr = (curses.color_pair(2) | curses.A_BOLD) if has_c else curses.A_BOLD
+    sep_attr = (curses.color_pair(3) | curses.A_BOLD) if has_c else curses.A_NORMAL
+    txt_attr = curses.color_pair(7) if has_c else curses.A_NORMAL
+
     hdr = f" {title} Help (Tutorial) | Press any key to return "
-    stdscr.addstr(0, 0, hdr.ljust(w-1)[:w-1], curses.A_REVERSE)
-    
+    stdscr.addstr(0, 0, hdr.ljust(w-1)[:w-1], hdr_attr)
+
     for i, line in enumerate(lines):
-        if i + 2 < h - 1:
-            stdscr.addstr(i + 2, 2, line[:w-4])
-            
+        row = i + 2
+        if row >= h - 1:
+            break
+        if not line.strip():
+            continue
+        if line.endswith(":") and ":" not in line[:-1]:
+            try:
+                stdscr.addstr(row, 2, line[:w-4], sec_attr)
+            except curses.error:
+                pass
+        elif ":" in line:
+            k_part, d_part = line.split(":", 1)
+            try:
+                stdscr.addstr(row, 2, k_part[:w-4], key_attr)
+                col_x = 2 + len(k_part)
+                if col_x < w - 2:
+                    stdscr.addstr(row, col_x, ":", sep_attr)
+                if col_x + 1 < w - 2:
+                    stdscr.addstr(row, col_x + 1, d_part[:(w - 3 - col_x)], txt_attr)
+            except curses.error:
+                pass
+        else:
+            try:
+                stdscr.addstr(row, 2, line[:w-4], txt_attr)
+            except curses.error:
+                pass
+
     ftr = " Press any key to close "
-    stdscr.addstr(h - 1, 0, ftr.ljust(w-1)[:w-1], curses.A_REVERSE)
+    stdscr.addstr(h - 1, 0, ftr.ljust(w-1)[:w-1], hdr_attr)
     stdscr.getch()
 
-def settings_menu(stdscr, config):
+def settings_menu(stdscr, config, use_color=True):
     color_names = ['BLK', 'RED', 'GRN', 'YEL', 'BLU', 'MAG', 'CYN', 'WHT']
     sel_idx = 0
     opts = ['editor', 'color_dir', 'color_exe', 'color_sym', 'color_def']
     labels = ['Default Editor', 'Dir Color', 'Exe Color', 'Sym Color', 'Def Text']
-    
+    samples = {
+        'editor': 'Press ENTER to change editor command',
+        'color_dir': 'drwxr-xr-x  sample_dir/',
+        'color_exe': '-rwxr-xr-x  zoseza.py*',
+        'color_sym': 'lrwxrwxrwx  link -> target',
+        'color_def': '-rw-r--r--  README.md'
+    }
+
     help_lines = [
-        "UP/DOWN       : Move selection",
-        "LEFT/RIGHT    : Cycle through available colors",
-        "ENTER         : Edit the text value (Editor)",
-        "s             : Save config to ~/.pyeza.json and exit",
-        "ESC           : Go back to directory browser without saving",
-        "q             : Quit menu without saving"
+        "Settings Navigation:",
+        "  UP/DOWN       : Move selection",
+        "  LEFT/RIGHT    : Cycle through available colors",
+        "  ENTER         : Edit the Default Editor command",
+        "",
+        "Actions:",
+        "  s             : Save config to ~/.pyeza.json and exit",
+        "  ESC           : Go back to directory browser without saving",
+        "  q             : Quit menu without saving"
     ]
-    
+
     while True:
         h, w = stdscr.getmaxyx()
         stdscr.clear()
-        
-        hdr = f" {CMD_NAME} Settings | UP/DN: Sel | L/R: Color | s: Save | F1: Help | q: Quit "
-        stdscr.addstr(0, 0, hdr.ljust(w-1)[:w-1], curses.A_REVERSE)
-        
+        has_c = use_color and curses.has_colors()
+
+        hdr_attr = (curses.color_pair(3) | curses.A_REVERSE | curses.A_BOLD) if has_c else curses.A_REVERSE
+        sec_attr = (curses.color_pair(6) | curses.A_BOLD) if has_c else curses.A_BOLD
+        lbl_attr = (curses.color_pair(2) | curses.A_BOLD) if has_c else curses.A_BOLD
+        sep_attr = (curses.color_pair(3) | curses.A_BOLD) if has_c else curses.A_NORMAL
+        txt_attr = (curses.color_pair(7) | curses.A_BOLD) if has_c else curses.A_NORMAL
+
+        hdr = f" {CMD_NAME} Settings | UP/DN: Sel | L/R: Color | ENTER: Edit | s: Save | F1: Help | q: Quit "
+        stdscr.addstr(0, 0, hdr.ljust(w-1)[:w-1], hdr_attr)
+
+        if h > 3:
+            stdscr.addstr(2, 2, "Configuration & Color Preferences:"[:w-4], sec_attr)
+            stdscr.addstr(3, 2, "\u2500" * min(w - 4, 68), sep_attr)
+
         for i, opt in enumerate(opts):
+            row = i + 4
+            if row >= h - 2:
+                break
             val = config[opt]
-            val_str = color_names[val] if opt.startswith('color_') else str(val)
-            display = f" {labels[i].ljust(15)} : {val_str}"
-            attr = curses.A_REVERSE if i == sel_idx else curses.A_NORMAL
-            stdscr.addstr(i + 2, 2, display[:w-4], attr)
-            
+            is_sel = (i == sel_idx)
+            is_color = opt.startswith('color_')
+            val_str = f"< {color_names[val]} >" if is_color else str(val)
+            sample_str = samples.get(opt, '')
+
+            if is_color and has_c:
+                val_attr = curses.color_pair(10 + (val % 8)) | curses.A_BOLD
+            else:
+                val_attr = txt_attr
+
+            ptr = " > " if is_sel else "   "
+            lbl_text = f"{ptr}{labels[i].ljust(15)}"
+            l_attr = (lbl_attr | curses.A_REVERSE) if is_sel else lbl_attr
+            v_attr = (val_attr | curses.A_REVERSE) if is_sel else val_attr
+
+            try:
+                stdscr.addstr(row, 2, lbl_text[:w-4], l_attr)
+                col_x = 2 + len(lbl_text)
+                if col_x + 3 < w - 2:
+                    stdscr.addstr(row, col_x, " : ", sep_attr)
+                    col_x += 3
+                val_disp = val_str.ljust(10)
+                if col_x + len(val_disp) < w - 2:
+                    stdscr.addstr(row, col_x, val_disp, v_attr)
+                    col_x += len(val_disp)
+                if is_color and col_x + 4 < w - 2:
+                    preview = f"  [{sample_str}]"
+                    stdscr.addstr(row, col_x, preview[:(w - 2 - col_x)], val_attr)
+                elif not is_color and col_x + 4 < w - 2:
+                    hint = f"  ({sample_str})"
+                    stdscr.addstr(row, col_x, hint[:(w - 2 - col_x)], sep_attr)
+            except curses.error:
+                pass
+
+        ftr = " s:Save & Apply | LEFT/RIGHT:Change Color | ENTER:Edit Editor | ESC/q:Cancel "
+        stdscr.addstr(h - 1, 0, ftr.ljust(w-1)[:w-1], hdr_attr)
+
         stdscr.nodelay(True)
         k = stdscr.getch()
         stdscr.nodelay(False)
-        
+
         if k == -1: k = stdscr.getch()
-            
-        if k == 27: 
+
+        if k == 27:
             stdscr.nodelay(True)
             k2 = stdscr.getch()
             stdscr.nodelay(False)
-            if k2 == -1: return None 
+            if k2 == -1: return None
             else: curses.ungetch(k2)
-            
+
         if k == curses.KEY_F1: show_help(stdscr, "Settings", help_lines)
         elif k == ord('q'): return None
         elif k == ord('s'): return config
@@ -622,7 +814,7 @@ def settings_menu(stdscr, config):
         elif k == curses.KEY_LEFT and opts[sel_idx].startswith('color_'):
             config[opts[sel_idx]] = (config[opts[sel_idx]] - 1) % 8
         elif k in (curses.KEY_ENTER, 10, 13) and opts[sel_idx] == 'editor':
-            new_ed = get_input(stdscr, h-1, w, " New Editor Command: ")
+            new_ed = popup_input(stdscr, "Default Editor", "Editor command ($EDITOR):", default=str(config['editor']))
             if new_ed: config['editor'] = new_ed
 
 def addstr_ansi(stdscr, y, x, text, sel=False, max_w=80):
@@ -1108,40 +1300,38 @@ def tui_loop(stdscr, start_paths, args):
         elif k == ord('D'):
             sel = items[sel_idx]
             if sel[1] and sel[0] != '..':
-                if get_confirm(stdscr, h-1, w, f" Delete {sel[0]}? (y/N): "):
+                kind = "directory" if stat.S_ISDIR(sel[1].st_mode) else "file"
+                if popup_confirm(stdscr, "Confirm Delete", f"Delete {kind} '{sel[0]}'?"):
                     try:
                         if stat.S_ISDIR(sel[1].st_mode): shutil.rmtree(sel[2])
                         else: os.remove(sel[2])
                         prev_dir = None
                     except Exception as e:
-                        stdscr.addstr(h-1, 0, f" Err: {e} "[:w-1].ljust(w-1), curses.A_REVERSE)
-                        stdscr.getch()
+                        popup_message(stdscr, "Delete Error", str(e), is_error=True)
         elif k == ord('R'):
             sel = items[sel_idx]
             if sel[1] and sel[0] != '..':
-                new_n = get_input(stdscr, h-1, w, f" Rename {sel[0]} to: ")
-                if new_n:
+                new_n = popup_input(stdscr, "Rename Item", f"Rename '{sel[0]}' to:", default=sel[0])
+                if new_n and new_n != sel[0]:
                     try:
                         os.rename(sel[2], os.path.join(current_dir, new_n))
                         prev_dir = None
                     except Exception as e:
-                        stdscr.addstr(h-1, 0, f" Err: {e} "[:w-1].ljust(w-1), curses.A_REVERSE)
-                        stdscr.getch()
+                        popup_message(stdscr, "Rename Error", str(e), is_error=True)
         elif k == ord('C'):
             sel = items[sel_idx]
             if sel[1] and sel[0] != '..':
-                new_n = get_input(stdscr, h-1, w, f" Copy {sel[0]} to: ")
-                if new_n:
+                new_n = popup_input(stdscr, "Copy Item", f"Copy '{sel[0]}' to:", default=sel[0])
+                if new_n and new_n != sel[0]:
                     try:
                         dst = os.path.join(current_dir, new_n)
                         if stat.S_ISDIR(sel[1].st_mode): shutil.copytree(sel[2], dst)
                         else: shutil.copy2(sel[2], dst)
                         prev_dir = None
                     except Exception as e:
-                        stdscr.addstr(h-1, 0, f" Err: {e} "[:w-1].ljust(w-1), curses.A_REVERSE)
-                        stdscr.getch()
+                        popup_message(stdscr, "Copy Error", str(e), is_error=True)
         elif k == ord('o'):
-            new_cfg = settings_menu(stdscr, dict(config))
+            new_cfg = settings_menu(stdscr, dict(config), use_tui_color)
             if new_cfg:
                 config = new_cfg
                 save_config(config)
