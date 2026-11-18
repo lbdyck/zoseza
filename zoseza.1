@@ -1,4 +1,4 @@
-.TH ZOSEZA 1 "November 2026" "zoseza 1.5.0" "User Commands"
+.TH ZOSEZA 1 "November 2026" "zoseza 1.7.0" "User Commands"
 .SH NAME
 zoseza \- modern eza-inspired file listing utility for IBM z/OS USS
 .SH SYNOPSIS
@@ -22,7 +22,9 @@ In addition to a traditional command-line interface,
 .B zoseza
 provides an interactive full-screen Text User Interface (TUI) for
 browsing, sorting, filtering, dynamically adding or removing display
-columns, inspecting, editing, and managing files directly on the mainframe.
+columns, inspecting, viewing files in ASCII/EBCDIC/Hex, modifying z/OS
+attributes (\fBchtag\fR, \fBextattr\fR, \fBchmod\fR), editing, and managing
+files directly on the mainframe.
 .SH POSITIONAL ARGUMENTS
 .TP
 .I paths
@@ -95,6 +97,12 @@ authorized, program controlled, shared address space, shared library).
 .B \-\-tree
 Display directories and their contents in a recursive tree hierarchy.
 .TP
+.BI "\-L, \-\-level " DEPTH
+Limit the recursion depth when displaying a directory tree with \fB\-\-tree\fR.
+.TP
+.B \-\-group\-directories\-first
+List directories before regular files across any active sort order.
+.TP
 .BR \-d ", " \-\-directory
 List directories themselves rather than their contents.
 .TP
@@ -108,8 +116,9 @@ Reverse the active sort order.
 Display one entry per line.
 .TP
 .BR \-D ", " \-\-dsn
-Show underlying zFS dataset names in brackets for directories, files,
-and symlinks.
+Show underlying zFS dataset names in brackets. To reduce visual clutter,
+the dataset name is displayed on the first entry and whenever an entry
+resides on a different zFS dataset than the preceding line.
 .TP
 .BI "\-\-color " WHEN
 Specify when to use terminal colors: \fBauto\fR (default; colors enabled
@@ -124,17 +133,32 @@ Display program version information and exit.
 .B \-\-tui
 Launch the interactive full-screen curses Text User Interface.
 .SH TUI HOTKEYS
-When running with \fB\-\-tui\fR, the following interactive keys are available:
+When running with \fB\-\-tui\fR, each hotkey is listed below in a
+single-column reference:
 .TP
 .B UP / DOWN
-Move the selection cursor up or down.
+Move the selection cursor up or down line by line.
+.TP
+.B PgUp / PgDn
+Scroll the directory listing or built-in file viewer by a full page.
+.TP
+.B Home / End
+Jump immediately to the first or last entry in the directory or file viewer.
 .TP
 .B ENTER
 Enter the selected directory or open the selected file in the built-in
-read-only viewer.
+viewer (which supports live ASCII, EBCDIC \fBIBM-1047\fR, and Hex dump
+toggles).
 .TP
 .B ESC
-Navigate up to the parent directory, or close active sub-views and dialogs.
+Navigate up to the parent directory, or close active sub-views and dialogs
+(configured with a fast 25ms escape delay).
+.TP
+.B .
+Toggle display of hidden dotfiles (\fB\-a\fR).
+.TP
+.B d
+Toggle grouping directories before regular files (\fB[Dirs1st]\fR).
 .TP
 .B i
 Open the full-screen File Info inspector showing complete POSIX metadata,
@@ -145,42 +169,107 @@ point, timestamps, and Git status.
 Edit the selected file using the configured editor (\fB$EDITOR\fR or
 \fBvi\fR).
 .TP
-.B D / R / C
-Delete (\fBD\fR), Rename (\fBR\fR), or Copy (\fBC\fR) the selected file
-or directory using centered, bordered popup dialog boxes with pre-filled
-input fields and confirmation prompts.
+.B m
+Create a new directory (\fBmkdir\fR) via a centered popup input dialog.
 .TP
-.B s / t / a / C / n / r
-Sort entries by Size (\fBs\fR), MTime (\fBt\fR), ATime (\fBa\fR), CTime
-(\fBC\fR), Name (\fBn\fR), or Reverse the current sort (\fBr\fR).
+.B A
+Create a new empty file via a centered popup input dialog.
+.TP
+.B p
+Change file permissions (\fBchmod\fR) using a centered popup dialog
+pre-filled with the file's current 4-digit octal mode.
+.TP
+.B u
+Change the z/OS USS file tag (\fBchtag\fR) using a centered popup menu
+supporting \fBISO8859-1\fR, \fBIBM-1047\fR, \fBUTF-8\fR, custom codesets,
+binary (\fB\-b\fR), mixed (\fB\-m\fR), or tag removal (\fB\-r\fR).
+.TP
+.B x
+Modify z/OS extended attributes (\fBextattr\fR) using an interactive
+checklist modal for \fB+a\fR/\fB\-a\fR, \fB+p\fR/\fB\-p\fR,
+\fB+s\fR/\fB\-s\fR, and \fB+l\fR/\fB\-l\fR.
+.TP
+.B C
+Copy the selected file or directory using a centered, bordered popup
+dialog box pre-filled with the current name.
+.TP
+.B R
+Rename the selected file or directory using a centered, bordered popup
+dialog box pre-filled with the current name.
+.TP
+.B D
+Delete the selected file or directory after confirming in a centered
+popup dialog box.
+.TP
+.B s
+Sort entries by file size (largest first).
+.TP
+.B t
+Sort entries by modification time (\fBmtime\fR).
+.TP
+.B a
+Sort entries by last access time (\fBatime\fR).
+.TP
+.B z
+Sort entries by status change time (\fBctime\fR).
+.TP
+.B n
+Sort entries alphabetically by filename.
+.TP
+.B r
+Reverse the current sort order.
+.TP
+.B f \fRor\fB /
+Filter the current directory listing by substring.
+.TP
+.B c
+Clear the active substring filter in the directory browser, or cycle file
+decoding (\fBAUTO\fR, \fBISO8859-1\fR, \fBIBM-1047\fR, \fBHEX\fR) inside
+the built-in File Viewer.
+.TP
+.B h
+Toggle the side-by-side Hex / ASCII / EBCDIC (\fBIBM-1047\fR) dump view
+inside the built-in File Viewer.
 .TP
 .B v
 Open the interactive TUI Columns Menu modal to dynamically add or remove
 any column (Inode, Octal, Permissions, Links, Owner, Group, Numeric IDs,
 Size, 512B Blocks, Timestamp, Git Status, z/OS File Tags, ExtAttr, Icons,
-and zFS Dataset). Press \fBSPACE\fR/\fBENTER\fR or the bracketed shortcut
-key to toggle a column, \fBa\fR to enable all columns, or \fBd\fR to
-reset to defaults.
+and zFS Dataset). If \fBSave Columns\fR is enabled in the \fBo\fR Settings
+menu, pressing \fBs\fR inside the Columns Menu saves the active column
+layout to \fI~/.pyeza.json\fR.
 .TP
-.B I / O / N
-Toggle display of Inode numbers (\fBI\fR), Octal permissions (\fBO\fR),
-or Numeric UIDs/GIDs (\fBN\fR).
+.B I
+Toggle display of Inode numbers.
 .TP
-.B G / T / X / M
-Toggle display of Git status badges (\fBG\fR), z/OS File Tags (\fBT\fR),
-z/OS Extended Attributes (\fBX\fR), or zFS Dataset names (\fBM\fR) on the
-fly.
+.B O
+Toggle display of Octal permissions.
 .TP
-.B B / W
-Toggle 512-byte Block sizes (\fBB\fR) or Nerd Font Icons (\fBW\fR).
+.B N
+Toggle display of Numeric UIDs and GIDs.
 .TP
-.B f \fRor\fB /
-Filter the current directory listing by substring. Press \fBc\fR to
-clear the active filter.
+.B G
+Toggle display of Git status badges.
+.TP
+.B T
+Toggle display of z/OS File Tags (\fBchtag\fR).
+.TP
+.B X
+Toggle display of z/OS Extended Attributes (\fB[apsl]\fR).
+.TP
+.B M
+Toggle display of underlying zFS Dataset names.
+.TP
+.B B
+Toggle display of 512-byte Block sizes.
+.TP
+.B W
+Toggle display of Nerd Font Icons.
 .TP
 .B o
-Open the colorized interactive Settings menu with live color previews and
-popup editor configuration.
+Open the colorized interactive Settings menu with live color previews,
+popup editor configuration, the \fBSave Columns\fR toggle (default: OFF),
+and save confirmation dialog.
 .TP
 .B F1
 Display the colorized built-in TUI help screen.
@@ -203,8 +292,9 @@ overridden in \fI~/.pyeza.json\fR.
 .SH FILES
 .TP
 .I ~/.pyeza.json
-User preferences and TUI configuration file storing custom color pairs
-and default editor command.
+User preferences and TUI configuration file storing custom color pairs,
+default editor command, and optional saved column preferences (when
+\fBsave_columns\fR is enabled).
 .SH EXIT STATUS
 .TP
 .B 0
@@ -220,21 +310,23 @@ Execution interrupted by the user (\fBCtrl+C\fR / \fBSIGINT\fR).
 .B zoseza.py
 List files in the current directory in a multi-column grid.
 .TP
-.B zoseza.py \-laTgD
-Show all files in long format with Git status, z/OS file tags, and
-underlying zFS dataset names.
+.B zoseza.py \-laTgD \-\-group\-directories\-first
+Show all files in long format with directories grouped first, Git status,
+z/OS file tags, and underlying zFS dataset names (shown when the dataset
+changes).
 .TP
 .B zoseza.py \-tx \-e rex,py
 List REXX and Python files sorted by newest modification time alongside
 z/OS extended attributes.
 .TP
-.B zoseza.py \-\-tree
-Display a recursive directory tree.
+.B zoseza.py \-\-tree \-L 2
+Display a recursive directory tree limited to 2 levels deep.
 .TP
 .B zoseza.py \-\-tui
 Launch the interactive full-screen Text User Interface.
 .SH SEE ALSO
 .BR ls (1),
+.BR chmod (1),
 .BR chtag (1),
 .BR extattr (1),
 .BR df (1),

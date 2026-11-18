@@ -32,6 +32,9 @@ CLI Options:
   -T, --tags            Display z/OS file tags (state, codeset).
   -x, --extattr         Display z/OS extended attributes (APF, program control, etc.).
   --tree                Display output in a recursive tree topology.
+  -L, --level DEPTH     Limit the recursion depth of the tree display.
+  --group-directories-first
+                        List directories before regular files.
   -d, --directory       List directories themselves, not their contents.
   -S, --sort-size       Sort files by size (largest first).
   -r, --reverse         Reverse the current sort order.
@@ -43,16 +46,50 @@ CLI Options:
   --tui                 Launch the interactive fullscreen Text User Interface.
 
 TUI Hotkeys:
-  UP/DOWN : Navigate              s/t/a/C : Sort (Size/MTime/ATime/CTime)
-  ENTER   : Open Dir/File         n/r     : Sort (Name/Reverse)
-  ESC     : Go up one dir         f or /  : Filter by string
-  e       : Edit file             i       : Inspect full file details
-  D/R/C   : Delete/Rename/Copy    v       : Columns Menu (Add/Remove Columns)
-  I/O/N   : Toggle Inode/Octal/ID G/T/X/M : Toggle Git/Tags/ExtAttr/Dataset
-  c       : Clear filter          F1      : Show help tutorial
-  q       : Quit                  o       : Open settings
+  UP/DOWN       : Navigate cursor up or down
+  PgUp/PgDn     : Scroll directory list by page
+  Home/End      : Jump to first or last entry
+  ENTER         : Open directory or view file (with ASCII/EBCDIC/Hex toggle)
+  ESC           : Go up one directory or close sub-view
+  .             : Toggle hidden dotfiles (-a)
+  d             : Toggle grouping directories first
+  i             : Inspect full file details and z/OS metadata
+  e             : Edit file in configured editor
+  m             : Create new directory (mkdir popup)
+  A             : Create new empty file (touch popup)
+  p             : Change file permissions (chmod popup)
+  u             : Change z/OS file tag (chtag popup)
+  x             : Modify z/OS extended attributes (extattr popup)
+  C             : Copy file or directory (popup dialog)
+  R             : Rename file or directory (popup dialog)
+  D             : Delete file or directory (popup dialog)
+  v             : Open interactive Columns Menu (add/remove columns)
+  s             : Sort by file size
+  t             : Sort by modification time (mtime)
+  a             : Sort by access time (atime)
+  z             : Sort by status change time (ctime)
+  n             : Sort by filename
+  r             : Reverse active sort order
+  f or /        : Filter entries by substring
+  c             : Clear active filter
+  I / O / N     : Toggle Inode / Octal permissions / Numeric UID & GID
+  G / T / X / M : Toggle Git / z/OS Tags / ExtAttr / zFS Dataset
+  B / W         : Toggle 512B Blocks / Nerd Font Icons
+  o             : Open Settings menu (colors and editor)
+  F1            : Show colorized help tutorial
+  q             : Quit current view or exit TUI
 
 Change History:
+  2026-11-18: Made saving TUI column preferences an explicit setting (default: OFF) in Settings ('o') and Columns Menu ('v').
+  2026-11-18: Fixed residual background text bleed on line 2 of TUI popup dialogs using win.hline(ACS_HLINE).
+  2026-11-18: Added TUI popups for chtag ('u'), chmod ('p'), extattr ('x'), mkdir ('m'), and new file ('A').
+  2026-11-18: Added ASCII/EBCDIC (cp1047) and Hex dump toggles ('c', 'h') inside the TUI file viewer.
+  2026-11-18: Added PgUp/PgDn/Home/End navigation, '.' hidden file toggle, and 'd' group-dirs-first in TUI.
+  2026-11-18: Added CLI --group-directories-first and -L/--level tree depth limit.
+  2026-11-18: Added success confirmation popups after Copy ('C'), Delete ('D'), and Rename ('R') in TUI.
+  2026-11-18: Fixed 'C' (Copy) hotkey collision with CTime sort (moved CTime sort to 'z').
+  2026-11-18: Set ESCDELAY=25ms for instant ESC key response in TUI.
+  2026-11-18: Added confirmation popup when saving TUI settings and deduplicated -D dataset display.
   2026-11-18: Added interactive TUI Columns Menu ('v') and hotkeys to add or remove any display column.
   2026-11-18: Colorized TUI F1 help screens and added centered popup modals for Copy, Rename, and Delete.
   2026-11-17: Added 'i' hotkey in TUI to display comprehensive file metadata and z/OS attributes.
@@ -81,7 +118,7 @@ import re
 import curses
 from datetime import datetime
 
-VERSION = "1.5.0"
+VERSION = "1.7.0"
 CMD_NAME = os.path.basename(sys.argv[0])
 
 # ANSI Color Codes
@@ -112,7 +149,8 @@ def load_config():
         'color_dir': curses.COLOR_BLUE,
         'color_exe': curses.COLOR_GREEN,
         'color_sym': curses.COLOR_CYAN,
-        'color_def': curses.COLOR_WHITE
+        'color_def': curses.COLOR_WHITE,
+        'save_columns': False
     }
     conf_path = os.path.expanduser('~/.pyeza.json')
     if os.path.exists(conf_path):
@@ -388,7 +426,7 @@ def build_dict(entry, st, path, rel_path, g_stats, tags, x_stats, acls, args):
     return data
 
 def format_entry(entry, st, path, rel_path, g_stats, tags, x_stats, acls, args, 
-                 t_pfx="", force_long=False):
+                 t_pfx="", force_long=False, show_dsn=None):
     color = get_color(st.st_mode)
     icon = f"{get_icon(entry, st.st_mode)} " if args.icons else ""
     
@@ -412,7 +450,7 @@ def format_entry(entry, st, path, rel_path, g_stats, tags, x_stats, acls, args,
         except OSError: pass
 
     if args.dsn:
-        dsn_val = get_zfs_dsn(path)
+        dsn_val = show_dsn if show_dsn is not None else get_zfs_dsn(path)
         if dsn_val:
             sym_tgt += f"  {COLORS['dsn']}[{dsn_val}]{COLORS['reset']}"
             tgt_vis_len += 4 + len(dsn_val)
@@ -456,7 +494,7 @@ def format_entry(entry, st, path, rel_path, g_stats, tags, x_stats, acls, args,
         vlen += len(entry) + tgt_vis_len
         return out, vlen
 
-def process_directory(target_dir, args, g_stats, prefix="", r_base="", root=True):
+def process_directory(target_dir, args, g_stats, prefix="", r_base="", root=True, last_dsn=None, depth=1):
     contents = []
     try: raw_entries = os.listdir(target_dir)
     except PermissionError:
@@ -497,11 +535,17 @@ def process_directory(target_dir, args, g_stats, prefix="", r_base="", root=True
         else: files.sort(key=lambda x: x[1].st_mtime, reverse=not args.reverse)
     else:
         files.sort(key=lambda x: x[0].lower(), reverse=args.reverse)
+
+    if getattr(args, 'group_directories_first', False):
+        files.sort(key=lambda x: 0 if stat.S_ISDIR(x[1].st_mode) else 1)
         
     if args.reverse and not args.sort_size and not args.time:
         entries_with_stats = files + dots
     else:
         entries_with_stats = dots + files
+
+    if last_dsn is None:
+        last_dsn = [None]
 
     short_items = []
     for i, (entry, st, path) in enumerate(entries_with_stats):
@@ -509,10 +553,17 @@ def process_directory(target_dir, args, g_stats, prefix="", r_base="", root=True
         rel_path = os.path.join(r_base, entry) if r_base else entry
         t_conn = "\u2514\u2500\u2500 " if (args.tree and is_last) else "\u251c\u2500\u2500 " if args.tree else ""
         
+        disp_dsn = ""
+        if args.dsn:
+            cur_dsn = get_zfs_dsn(path)
+            if cur_dsn and cur_dsn != last_dsn[0]:
+                disp_dsn = cur_dsn
+                last_dsn[0] = cur_dsn
+
         full_prefix = prefix + t_conn
         fmt_str, vlen = format_entry(
             entry, st, path, rel_path, g_stats, zos_tags, x_stats, acls, 
-            args, t_pfx=full_prefix
+            args, t_pfx=full_prefix, show_dsn=disp_dsn
         )
         
         if args.long or args.tree or args.oneline: print(fmt_str)
@@ -522,10 +573,11 @@ def process_directory(target_dir, args, g_stats, prefix="", r_base="", root=True
             entry, st, path, rel_path, g_stats, zos_tags, x_stats, acls, args
         )
             
-        if args.tree and stat.S_ISDIR(st.st_mode) and entry != '..':
+        max_lvl = getattr(args, 'level', None)
+        if args.tree and stat.S_ISDIR(st.st_mode) and entry != '..' and (max_lvl is None or depth < max_lvl):
             extension = "    " if is_last else "\u2502   "
             children = process_directory(
-                path, args, g_stats, prefix + extension, rel_path, root=False
+                path, args, g_stats, prefix + extension, rel_path, root=False, last_dsn=last_dsn, depth=depth + 1
             )
             item_data["children"] = children
         contents.append(item_data)
@@ -598,16 +650,20 @@ def popup_input(stdscr, title, prompt, default=""):
 
         k = win.getch()
         if k == 27:
-            win.nodelay(True)
-            k2 = win.getch()
-            win.nodelay(False)
-            if k2 == -1:
-                try: curses.curs_set(0)
-                except Exception: pass
-                return None
+            try: curses.curs_set(0)
+            except Exception: pass
+            win.erase()
+            win.refresh()
+            stdscr.touchwin()
+            stdscr.refresh()
+            return None
         elif k in (curses.KEY_ENTER, 10, 13):
             try: curses.curs_set(0)
             except Exception: pass
+            win.erase()
+            win.refresh()
+            stdscr.touchwin()
+            stdscr.refresh()
             return "".join(buf).strip()
         elif k in (curses.KEY_BACKSPACE, 127, 8):
             if buf:
@@ -641,8 +697,16 @@ def popup_confirm(stdscr, title, prompt):
     while True:
         k = win.getch()
         if k in (ord('y'), ord('Y')):
+            win.erase()
+            win.refresh()
+            stdscr.touchwin()
+            stdscr.refresh()
             return True
         if k in (ord('n'), ord('N'), ord('q'), ord('Q'), 27):
+            win.erase()
+            win.refresh()
+            stdscr.touchwin()
+            stdscr.refresh()
             return False
 
 def popup_message(stdscr, title, message, is_error=True):
@@ -667,7 +731,7 @@ def popup_message(stdscr, title, message, is_error=True):
     win.refresh()
     win.getch()
 
-def popup_columns(stdscr, args, use_color=True):
+def popup_columns(stdscr, args, config, use_color=True):
     col_defs = [
         ('inode',      'Inode Number',          'I'),
         ('octal',      'Octal Permissions',     'O'),
@@ -676,7 +740,7 @@ def popup_columns(stdscr, args, use_color=True):
         ('show_user',  'Owner / User',          'U'),
         ('show_group', 'Group Name',            'K'),
         ('numeric',    'Numeric UID / GID',     'N'),
-        ('show_size',  'File Size',             'S'),
+        ('show_size',  'File Size',             'F'),
         ('blocks',     'Size in 512B Blocks',   'B'),
         ('show_time',  'Timestamp Column',      'E'),
         ('git',        'Git Status Badge',      'G'),
@@ -690,12 +754,19 @@ def popup_columns(stdscr, args, use_color=True):
     while True:
         h, w = stdscr.getmaxyx()
         box_h = min(len(col_defs) + 6, max(10, h - 2))
-        box_w = min(54, max(32, w - 4))
+        box_w = min(58, max(36, w - 4))
         start_y = max(0, (h - box_h) // 2)
         start_x = max(0, (w - box_w) // 2)
 
         win = curses.newwin(box_h, box_w, start_y, start_x)
         win.keypad(True)
+        win.erase()
+        for r_idx in range(box_h):
+            try:
+                win.addstr(r_idx, 0, " " * (box_w - 1))
+            except curses.error:
+                pass
+
         has_c = use_color and curses.has_colors()
 
         b_attr = (curses.color_pair(3) | curses.A_BOLD) if has_c else curses.A_BOLD
@@ -708,11 +779,18 @@ def popup_columns(stdscr, args, use_color=True):
         win.box()
         win.attroff(b_attr)
 
+        can_save = bool(config.get('save_columns', False))
         t_str = " TUI Columns (Add / Remove) "
         win.addstr(0, max(2, (box_w - len(t_str)) // 2), t_str[:box_w - 4], b_attr | curses.A_REVERSE)
-        sub_str = "SPACE/ENTER: Toggle | a: All | d: Default | q/ESC: Close"
-        win.addstr(1, max(2, (box_w - len(sub_str)) // 2), sub_str[:box_w - 4], b_attr)
-        win.addstr(2, 2, "\u2500" * (box_w - 4), b_attr)
+        if can_save:
+            sub_str = "SPACE: Toggle | a: All | d: Def | s: Save | q/ESC: Exit"
+        else:
+            sub_str = "SPACE/ENTER: Toggle | a: All | d: Default | q/ESC: Exit"
+        win.addstr(1, 2, sub_str.center(box_w - 4)[:box_w - 4], b_attr)
+        try:
+            win.hline(2, 1, curses.ACS_HLINE, box_w - 2, b_attr)
+        except curses.error:
+            win.addstr(2, 1, "-" * (box_w - 2), b_attr)
 
         list_h = box_h - 5
         top_i = max(0, min(sel_idx - list_h + 1, len(col_defs) - list_h)) if sel_idx >= list_h else 0
@@ -737,29 +815,40 @@ def popup_columns(stdscr, args, use_color=True):
                 l_attr |= curses.A_REVERSE
                 k_attr = key_attr | curses.A_REVERSE
             else:
+                win.addstr(row_y, 2, " " * (box_w - 4), curses.A_NORMAL)
                 k_attr = key_attr
 
             try:
                 win.addstr(row_y, 2, f" {ptr} {chk} ", c_attr)
-                win.addstr(row_y, 9, f"{label:<26}"[:box_w - 19], l_attr)
+                win.addstr(row_y, 9, f"{label:<28}"[:box_w - 19], l_attr)
                 if box_w >= 44:
                     win.addstr(row_y, box_w - 10, f"[{hk}]", k_attr)
             except curses.error:
                 pass
 
-        ftr_hint = " Changes apply live to the directory browser "
-        win.addstr(box_h - 2, max(2, (box_w - len(ftr_hint)) // 2), ftr_hint[:box_w - 4], curses.A_DIM)
+        if can_save:
+            ftr_hint = " s: Save layout to ~/.pyeza.json | Changes apply live "
+        else:
+            ftr_hint = " Changes apply live (Enable 'Save Columns' in 'o' Settings) "
+        win.addstr(box_h - 2, 2, ftr_hint.center(box_w - 4)[:box_w - 4], curses.A_DIM)
         win.refresh()
 
         k = win.getch()
         if k == 27:
-            win.nodelay(True)
-            k2 = win.getch()
-            win.nodelay(False)
-            if k2 == -1:
-                break
+            win.erase(); win.refresh(); stdscr.touchwin(); stdscr.refresh()
+            return False
         elif k in (ord('q'), ord('Q'), ord('v'), ord('V')):
-            break
+            win.erase(); win.refresh(); stdscr.touchwin(); stdscr.refresh()
+            return False
+        elif k in (ord('s'), ord('S')) and can_save:
+            saved_cols = {}
+            for attr_name, _, _ in col_defs:
+                saved_cols[attr_name] = bool(getattr(args, attr_name, True))
+            config['columns'] = saved_cols
+            save_config(config)
+            win.erase(); win.refresh(); stdscr.touchwin(); stdscr.refresh()
+            popup_message(stdscr, "Columns Saved", "Saved column preferences to ~/.pyeza.json", is_error=False)
+            return True
         elif k == curses.KEY_UP:
             sel_idx = max(0, sel_idx - 1)
         elif k == curses.KEY_DOWN:
@@ -787,6 +876,217 @@ def popup_columns(stdscr, args, use_color=True):
                     sel_idx = c_i
                     setattr(args, attr_name, not bool(getattr(args, attr_name, True)))
                     break
+
+def popup_chtag(stdscr, entry, path, use_color=True):
+    opts = [
+        ("1", "Text: ISO8859-1 (ASCII)",   ['chtag', '-tc', 'ISO8859-1', path]),
+        ("2", "Text: IBM-1047 (EBCDIC)",   ['chtag', '-tc', 'IBM-1047', path]),
+        ("3", "Text: UTF-8",               ['chtag', '-tc', 'UTF-8', path]),
+        ("4", "Text: Custom Codeset...",   None),
+        ("5", "Binary (-b)",               ['chtag', '-b', path]),
+        ("6", "Mixed Text/Binary (-m)",    ['chtag', '-m', path]),
+        ("7", "Remove File Tag (-r)",      ['chtag', '-r', path]),
+    ]
+    sel_idx = 0
+    while True:
+        h, w = stdscr.getmaxyx()
+        box_h = min(len(opts) + 6, max(10, h - 2))
+        box_w = min(54, max(34, w - 4))
+        start_y = max(0, (h - box_h) // 2)
+        start_x = max(0, (w - box_w) // 2)
+
+        win = curses.newwin(box_h, box_w, start_y, start_x)
+        win.keypad(True)
+        win.erase()
+        for r_idx in range(box_h):
+            try: win.addstr(r_idx, 0, ' ' * (box_w - 1))
+            except curses.error: pass
+        has_c = use_color and curses.has_colors()
+        b_attr = (curses.color_pair(3) | curses.A_BOLD) if has_c else curses.A_BOLD
+        txt_attr = (curses.color_pair(7) | curses.A_BOLD) if has_c else curses.A_NORMAL
+        key_attr = (curses.color_pair(2) | curses.A_BOLD) if has_c else curses.A_BOLD
+
+        win.attron(b_attr)
+        win.box()
+        win.attroff(b_attr)
+
+        t_str = f" z/OS File Tag (chtag): {entry[:20]} "
+        win.addstr(0, max(2, (box_w - len(t_str)) // 2), t_str[:box_w - 4], b_attr | curses.A_REVERSE)
+        sub_str = "UP/DN/1-7: Select | ENTER: Apply | ESC/q: Cancel"
+        win.addstr(1, max(2, (box_w - len(sub_str)) // 2), sub_str[:box_w - 4], b_attr)
+        try:
+            win.hline(2, 1, curses.ACS_HLINE, box_w - 2, b_attr)
+        except curses.error:
+            win.addstr(2, 1, "-" * (box_w - 2), b_attr)
+
+        for idx, (hk, label, _) in enumerate(opts):
+            row_y = 3 + idx
+            if row_y >= box_h - 2:
+                break
+            is_sel = (idx == sel_idx)
+            ptr = ">" if is_sel else " "
+            l_attr = (txt_attr | curses.A_REVERSE) if is_sel else txt_attr
+            k_attr = (key_attr | curses.A_REVERSE) if is_sel else key_attr
+            if is_sel:
+                win.addstr(row_y, 2, " " * (box_w - 4), curses.A_REVERSE)
+            try:
+                win.addstr(row_y, 3, f"{ptr} [{hk}] ", k_attr)
+                win.addstr(row_y, 10, label[:box_w - 12], l_attr)
+            except curses.error:
+                pass
+
+        win.refresh()
+        k = win.getch()
+        if k in (27, ord('q'), ord('Q')):
+            win.erase(); win.refresh(); stdscr.touchwin(); stdscr.refresh()
+            return False
+        elif k == curses.KEY_UP:
+            sel_idx = max(0, sel_idx - 1)
+        elif k == curses.KEY_DOWN:
+            sel_idx = min(len(opts) - 1, sel_idx + 1)
+        else:
+            chosen = None
+            if k in (curses.KEY_ENTER, 10, 13):
+                chosen = opts[sel_idx]
+            elif 32 <= k <= 126:
+                ch = chr(k)
+                for idx, item in enumerate(opts):
+                    if item[0] == ch:
+                        sel_idx = idx
+                        chosen = item
+                        break
+            if chosen is not None:
+                win.erase(); win.refresh(); stdscr.touchwin(); stdscr.refresh()
+                cmd = chosen[2]
+                if cmd is None:
+                    cs = popup_input(stdscr, "Custom Codeset", f"Enter codeset for '{entry}':", default="IBM-1047")
+                    if not cs:
+                        return False
+                    t_mode = popup_input(stdscr, "Tag Mode", "Mode (-tc for text, -mc for mixed):", default="-tc")
+                    if not t_mode:
+                        return False
+                    cmd = ['chtag', t_mode, cs, path]
+                try:
+                    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    if res.returncode == 0:
+                        popup_message(stdscr, "chtag Complete", f"Updated file tag for '{entry}'", is_error=False)
+                        return True
+                    else:
+                        err = (res.stderr or res.stdout or "chtag failed").strip()
+                        popup_message(stdscr, "chtag Error", err, is_error=True)
+                        return False
+                except Exception as e:
+                    popup_message(stdscr, "chtag Error", str(e), is_error=True)
+                    return False
+
+def popup_extattr(stdscr, entry, path, cur_ext=None, use_color=True):
+    flags = [
+        ('a', 'APF Authorized'),
+        ('p', 'Program Controlled'),
+        ('s', 'Shared Address Space'),
+        ('l', 'Shared Library'),
+    ]
+    state = {}
+    if cur_ext and len(cur_ext) >= 4:
+        for idx, (f_char, _) in enumerate(flags):
+            state[f_char] = (cur_ext[idx] == f_char)
+    else:
+        try:
+            res = subprocess.run(['extattr', path], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+            for line in res.stdout.splitlines():
+                parts = line.split(None, 4)
+                if len(parts) >= 4 and all(len(p) == 1 for p in parts[:4]):
+                    for idx, (f_char, _) in enumerate(flags):
+                        state[f_char] = (parts[idx] == f_char)
+                    break
+        except Exception:
+            pass
+    for f_char, _ in flags:
+        state.setdefault(f_char, False)
+
+    sel_idx = 0
+    while True:
+        h, w = stdscr.getmaxyx()
+        box_h = 10
+        box_w = min(54, max(34, w - 4))
+        start_y = max(0, (h - box_h) // 2)
+        start_x = max(0, (w - box_w) // 2)
+
+        win = curses.newwin(box_h, box_w, start_y, start_x)
+        win.keypad(True)
+        win.erase()
+        for r_idx in range(box_h):
+            try: win.addstr(r_idx, 0, ' ' * (box_w - 1))
+            except curses.error: pass
+        has_c = use_color and curses.has_colors()
+        b_attr = (curses.color_pair(3) | curses.A_BOLD) if has_c else curses.A_BOLD
+        on_attr = (curses.color_pair(2) | curses.A_BOLD) if has_c else curses.A_BOLD
+        off_attr = (curses.color_pair(5) | curses.A_BOLD) if has_c else curses.A_NORMAL
+        txt_attr = (curses.color_pair(7) | curses.A_BOLD) if has_c else curses.A_NORMAL
+
+        win.attron(b_attr)
+        win.box()
+        win.attroff(b_attr)
+
+        t_str = f" z/OS ExtAttr: {entry[:22]} "
+        win.addstr(0, max(2, (box_w - len(t_str)) // 2), t_str[:box_w - 4], b_attr | curses.A_REVERSE)
+        sub_str = "SPACE: Toggle | ENTER/s: Apply | ESC/q: Cancel"
+        win.addstr(1, max(2, (box_w - len(sub_str)) // 2), sub_str[:box_w - 4], b_attr)
+        try:
+            win.hline(2, 1, curses.ACS_HLINE, box_w - 2, b_attr)
+        except curses.error:
+            win.addstr(2, 1, "-" * (box_w - 2), b_attr)
+
+        for idx, (f_char, label) in enumerate(flags):
+            row_y = 3 + idx
+            en = state[f_char]
+            is_sel = (idx == sel_idx)
+            chk = f"[+{f_char}]" if en else f"[-{f_char}]"
+            ptr = ">" if is_sel else " "
+            c_attr = on_attr if en else off_attr
+            l_attr = txt_attr
+            if is_sel:
+                win.addstr(row_y, 2, " " * (box_w - 4), curses.A_REVERSE)
+                c_attr |= curses.A_REVERSE
+                l_attr |= curses.A_REVERSE
+            try:
+                win.addstr(row_y, 3, f"{ptr} {chk} ", c_attr)
+                win.addstr(row_y, 11, label[:box_w - 13], l_attr)
+            except curses.error:
+                pass
+
+        win.refresh()
+        k = win.getch()
+        if k in (27, ord('q'), ord('Q')):
+            win.erase(); win.refresh(); stdscr.touchwin(); stdscr.refresh()
+            return False
+        elif k == curses.KEY_UP:
+            sel_idx = max(0, sel_idx - 1)
+        elif k == curses.KEY_DOWN:
+            sel_idx = min(len(flags) - 1, sel_idx + 1)
+        elif k == ord(' '):
+            f_char = flags[sel_idx][0]
+            state[f_char] = not state[f_char]
+        elif k in (ord('a'), ord('p'), ord('s'), ord('l')) and k != ord('s'):
+            ch = chr(k)
+            state[ch] = not state[ch]
+        elif k in (curses.KEY_ENTER, 10, 13, ord('s'), ord('S')):
+            win.erase(); win.refresh(); stdscr.touchwin(); stdscr.refresh()
+            arg_flags = [f"+{fc}" if state[fc] else f"-{fc}" for fc, _ in flags]
+            try:
+                res = subprocess.run(['extattr'] + arg_flags + [path],
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                if res.returncode == 0:
+                    badge = "".join(fc if state[fc] else "-" for fc, _ in flags)
+                    popup_message(stdscr, "ExtAttr Complete", f"Set [{badge}] on '{entry}'", is_error=False)
+                    return True
+                else:
+                    err = (res.stderr or res.stdout or "extattr failed").strip()
+                    popup_message(stdscr, "ExtAttr Error", err, is_error=True)
+                    return False
+            except Exception as e:
+                popup_message(stdscr, "ExtAttr Error", str(e), is_error=True)
+                return False
 
 def show_help(stdscr, title, lines):
     h, w = stdscr.getmaxyx()
@@ -837,10 +1137,11 @@ def show_help(stdscr, title, lines):
 def settings_menu(stdscr, config, use_color=True):
     color_names = ['BLK', 'RED', 'GRN', 'YEL', 'BLU', 'MAG', 'CYN', 'WHT']
     sel_idx = 0
-    opts = ['editor', 'color_dir', 'color_exe', 'color_sym', 'color_def']
-    labels = ['Default Editor', 'Dir Color', 'Exe Color', 'Sym Color', 'Def Text']
+    opts = ['editor', 'save_columns', 'color_dir', 'color_exe', 'color_sym', 'color_def']
+    labels = ['Default Editor', 'Save Columns', 'Dir Color', 'Exe Color', 'Sym Color', 'Def Text']
     samples = {
         'editor': 'Press ENTER to change editor command',
+        'save_columns': 'Persist TUI column layout in ~/.pyeza.json (Default: OFF)',
         'color_dir': 'drwxr-xr-x  sample_dir/',
         'color_exe': '-rwxr-xr-x  zoseza.py*',
         'color_sym': 'lrwxrwxrwx  link -> target',
@@ -850,8 +1151,8 @@ def settings_menu(stdscr, config, use_color=True):
     help_lines = [
         "Settings Navigation:",
         "  UP/DOWN       : Move selection",
-        "  LEFT/RIGHT    : Cycle through available colors",
-        "  ENTER         : Edit the Default Editor command",
+        "  LEFT/RIGHT    : Cycle colors or toggle Save Columns (ON/OFF)",
+        "  SPACE/ENTER   : Edit Default Editor or toggle Save Columns",
         "",
         "Actions:",
         "  s             : Save config to ~/.pyeza.json and exit",
@@ -870,25 +1171,36 @@ def settings_menu(stdscr, config, use_color=True):
         sep_attr = (curses.color_pair(3) | curses.A_BOLD) if has_c else curses.A_NORMAL
         txt_attr = (curses.color_pair(7) | curses.A_BOLD) if has_c else curses.A_NORMAL
 
-        hdr = f" {CMD_NAME} Settings | UP/DN: Sel | L/R: Color | ENTER: Edit | s: Save | F1: Help | q: Quit "
+        hdr = f" {CMD_NAME} Settings | UP/DN: Sel | L/R/SPACE: Toggle | s: Save | F1: Help | q: Quit "
         stdscr.addstr(0, 0, hdr.ljust(w-1)[:w-1], hdr_attr)
 
         if h > 3:
             stdscr.addstr(2, 2, "Configuration & Color Preferences:"[:w-4], sec_attr)
-            stdscr.addstr(3, 2, "\u2500" * min(w - 4, 68), sep_attr)
+            try:
+                stdscr.hline(3, 2, curses.ACS_HLINE, min(w - 4, 68), sep_attr)
+            except curses.error:
+                stdscr.addstr(3, 2, "-" * min(w - 4, 68), sep_attr)
 
         for i, opt in enumerate(opts):
             row = i + 4
             if row >= h - 2:
                 break
-            val = config[opt]
+            val = config.get(opt, False if opt == 'save_columns' else '')
             is_sel = (i == sel_idx)
             is_color = opt.startswith('color_')
-            val_str = f"< {color_names[val]} >" if is_color else str(val)
+            is_bool = (opt == 'save_columns')
+            if is_color:
+                val_str = f"< {color_names[val]} >"
+            elif is_bool:
+                val_str = "< ON >" if val else "< OFF >"
+            else:
+                val_str = str(val)
             sample_str = samples.get(opt, '')
 
             if is_color and has_c:
                 val_attr = curses.color_pair(10 + (val % 8)) | curses.A_BOLD
+            elif is_bool and has_c:
+                val_attr = (curses.color_pair(2) if val else curses.color_pair(5)) | curses.A_BOLD
             else:
                 val_attr = txt_attr
 
@@ -916,34 +1228,37 @@ def settings_menu(stdscr, config, use_color=True):
             except curses.error:
                 pass
 
-        ftr = " s:Save & Apply | LEFT/RIGHT:Change Color | ENTER:Edit Editor | ESC/q:Cancel "
+        ftr = " s:Save & Apply | LEFT/RIGHT/SPACE:Change | ENTER:Edit | ESC/q:Cancel "
         stdscr.addstr(h - 1, 0, ftr.ljust(w-1)[:w-1], hdr_attr)
 
-        stdscr.nodelay(True)
         k = stdscr.getch()
-        stdscr.nodelay(False)
-
-        if k == -1: k = stdscr.getch()
-
         if k == 27:
-            stdscr.nodelay(True)
-            k2 = stdscr.getch()
-            stdscr.nodelay(False)
-            if k2 == -1: return None
-            else: curses.ungetch(k2)
+            return None
 
         if k == curses.KEY_F1: show_help(stdscr, "Settings", help_lines)
         elif k == ord('q'): return None
-        elif k == ord('s'): return config
+        elif k == ord('s'):
+            if not config.get('save_columns', False) and 'columns' in config:
+                del config['columns']
+            return config
         elif k == curses.KEY_UP: sel_idx = max(0, sel_idx - 1)
         elif k == curses.KEY_DOWN: sel_idx = min(len(opts) - 1, sel_idx + 1)
-        elif k == curses.KEY_RIGHT and opts[sel_idx].startswith('color_'):
-            config[opts[sel_idx]] = (config[opts[sel_idx]] + 1) % 8
-        elif k == curses.KEY_LEFT and opts[sel_idx].startswith('color_'):
-            config[opts[sel_idx]] = (config[opts[sel_idx]] - 1) % 8
-        elif k in (curses.KEY_ENTER, 10, 13) and opts[sel_idx] == 'editor':
-            new_ed = popup_input(stdscr, "Default Editor", "Editor command ($EDITOR):", default=str(config['editor']))
-            if new_ed: config['editor'] = new_ed
+        elif k == curses.KEY_RIGHT:
+            if opts[sel_idx].startswith('color_'):
+                config[opts[sel_idx]] = (config[opts[sel_idx]] + 1) % 8
+            elif opts[sel_idx] == 'save_columns':
+                config['save_columns'] = not bool(config.get('save_columns', False))
+        elif k == curses.KEY_LEFT:
+            if opts[sel_idx].startswith('color_'):
+                config[opts[sel_idx]] = (config[opts[sel_idx]] - 1) % 8
+            elif opts[sel_idx] == 'save_columns':
+                config['save_columns'] = not bool(config.get('save_columns', False))
+        elif k in (ord(' '), curses.KEY_ENTER, 10, 13):
+            if opts[sel_idx] == 'editor':
+                new_ed = popup_input(stdscr, "Default Editor", "Editor command ($EDITOR):", default=str(config['editor']))
+                if new_ed: config['editor'] = new_ed
+            elif opts[sel_idx] == 'save_columns':
+                config['save_columns'] = not bool(config.get('save_columns', False))
 
 def addstr_ansi(stdscr, y, x, text, sel=False, max_w=80):
     parts = text.split('\033[')
@@ -1138,20 +1453,9 @@ def show_file_info(stdscr, entry, st, path):
         ftr = " Press q, i, or ESC to return to browser "
         stdscr.addstr(h - 1, 0, ftr.ljust(w - 1)[:w - 1], curses.A_REVERSE)
 
-        stdscr.nodelay(True)
         k = stdscr.getch()
-        stdscr.nodelay(False)
-        if k == -1:
-            k = stdscr.getch()
-
         if k == 27:
-            stdscr.nodelay(True)
-            k2 = stdscr.getch()
-            stdscr.nodelay(False)
-            if k2 == -1:
-                break
-            else:
-                curses.ungetch(k2)
+            break
 
         if k in (ord('q'), ord('i'), curses.KEY_ENTER, 10, 13):
             break
@@ -1165,52 +1469,104 @@ def show_file_info(stdscr, entry, st, path):
             top = min(max(0, len(info_lines) - view_h), top + (view_h - 1))
 
 def view_file(stdscr, path):
+    raw_bytes = None
+    default_lines = []
     try:
         with open(path, 'r', errors='replace') as f:
-            lines = [line.rstrip('\n') for line in f]
+            default_lines = [line.rstrip('\r\n') for line in f]
     except Exception as e:
-        lines = [f"Error reading file {path}: {e}"]
+        default_lines = [f"Error reading file {path}: {e}"]
+
+    try:
+        with open(path, 'rb') as bf:
+            raw_bytes = bf.read()
+    except Exception:
+        raw_bytes = None
+
+    modes = ['AUTO', 'ISO8859-1', 'IBM-1047', 'HEX']
+    mode_idx = 0
+
+    def render_mode_lines(m_name):
+        if m_name == 'AUTO' or raw_bytes is None:
+            return default_lines
+        if m_name == 'ISO8859-1':
+            text = raw_bytes.decode('latin-1', errors='replace')
+            return text.splitlines()
+        if m_name == 'IBM-1047':
+            text = raw_bytes.decode('cp1047', errors='replace').replace('\x15', '\n')
+            return text.splitlines()
+        if m_name == 'HEX':
+            h_lines = [
+                "Offset    Hexadecimal                                       ASCII             EBCDIC (1047)",
+                "--------  ------------------------------------------------  ----------------  ----------------"
+            ]
+            limit = min(len(raw_bytes), 262144)
+            for off in range(0, limit, 16):
+                chunk = raw_bytes[off:off+16]
+                hex_part = " ".join(f"{b:02X}" for b in chunk).ljust(47)
+                asc_part = "".join(chr(b) if 32 <= b <= 126 else "." for b in chunk).ljust(16)
+                try:
+                    ebc_dec = chunk.decode('cp1047', errors='replace')
+                    ebc_part = "".join(ch if (' ' <= ch <= '~') else "." for ch in ebc_dec).ljust(16)
+                except Exception:
+                    ebc_part = "." * len(chunk)
+                h_lines.append(f"{off:08X}  {hex_part}   {asc_part}  {ebc_part}")
+            if len(raw_bytes) > limit:
+                h_lines.append(f"... (Hex dump truncated at {limit} bytes) ...")
+            return h_lines
+        return default_lines
+
+    lines = render_mode_lines(modes[mode_idx])
 
     help_lines = [
-        "UP/DOWN       : Scroll line by line",
-        "PgUp/PgDn     : Scroll by page",
-        "/             : Open search prompt at bottom",
-        "n             : Jump to next search match",
-        "ESC           : Go back to directory browser",
-        "q             : Go back to directory browser"
+        "Viewer Navigation:",
+        "  UP/DOWN       : Scroll line by line",
+        "  PgUp/PgDn     : Scroll by page",
+        "  Home/End      : Jump to top or bottom of file",
+        "",
+        "Encoding & Hex Inspection:",
+        "  c             : Cycle decoding (AUTO -> ISO8859-1 -> IBM-1047 -> HEX)",
+        "  h             : Toggle side-by-side Hex / ASCII / EBCDIC dump view",
+        "",
+        "Search & Exit:",
+        "  /             : Open search prompt at bottom",
+        "  n             : Jump to next search match",
+        "  ESC or q      : Go back to directory browser"
     ]
 
     top, query = 0, ""
     while True:
         h, w = stdscr.getmaxyx()
         stdscr.clear()
-        
+
         for i in range(h - 1):
             if top + i < len(lines):
                 stdscr.addstr(i, 0, lines[top + i][:w-1])
-                
-        stat_b = f" {path} | UP/DN: Scroll | /: Find | n: Next | F1: Help | q: Quit "
+
+        m_label = modes[mode_idx]
+        stat_b = f" {os.path.basename(path)} [{m_label}] | c:Code h:Hex /:Find n:Next F1:Help q:Quit "
         stdscr.addstr(h - 1, 0, stat_b[:w-1].ljust(w-1), curses.A_REVERSE)
-        
-        stdscr.nodelay(True)
+
         k = stdscr.getch()
-        stdscr.nodelay(False)
-        
-        if k == -1: k = stdscr.getch()
-            
-        if k == 27: 
-            stdscr.nodelay(True)
-            k2 = stdscr.getch()
-            stdscr.nodelay(False)
-            if k2 == -1: break
-            else: curses.ungetch(k2)
-            
+        if k == 27:
+            break
+
         if k == curses.KEY_F1: show_help(stdscr, "File Viewer", help_lines)
         elif k == ord('q'): break
         elif k == curses.KEY_UP: top = max(0, top - 1)
         elif k == curses.KEY_DOWN: top = min(max(0, len(lines) - h + 1), top + 1)
         elif k == curses.KEY_PPAGE: top = max(0, top - (h - 2))
         elif k == curses.KEY_NPAGE: top = min(max(0, len(lines) - h + 1), top + (h - 2))
+        elif k in (curses.KEY_HOME, ord('g')): top = 0
+        elif k in (curses.KEY_END, ord('G')): top = max(0, len(lines) - h + 1)
+        elif k in (ord('c'), ord('C')):
+            mode_idx = (mode_idx + 1) % len(modes)
+            lines = render_mode_lines(modes[mode_idx])
+            top = min(top, max(0, len(lines) - h + 1))
+        elif k in (ord('h'), ord('H')):
+            mode_idx = 3 if modes[mode_idx] != 'HEX' else 0
+            lines = render_mode_lines(modes[mode_idx])
+            top = 0
         elif k == ord('/'):
             query = get_input(stdscr, h-1, w, " Search: ")
             for i in range(top, len(lines)):
@@ -1222,6 +1578,10 @@ def view_file(stdscr, path):
                     top = i; break
 
 def tui_loop(stdscr, start_paths, args):
+    try:
+        curses.set_escdelay(25)
+    except Exception:
+        pass
     curses.curs_set(0)
     stdscr.keypad(True)
     
@@ -1259,31 +1619,39 @@ def tui_loop(stdscr, start_paths, args):
         if not hasattr(args, col_attr):
             setattr(args, col_attr, True)
 
+    saved_cols = config.get('columns') if config.get('save_columns', False) else None
+    if isinstance(saved_cols, dict):
+        for c_key, c_val in saved_cols.items():
+            if c_key in ('show_perms', 'show_links', 'show_user', 'show_group', 'show_size', 'show_time'):
+                setattr(args, c_key, bool(c_val))
+            elif hasattr(args, c_key) and not getattr(args, c_key):
+                setattr(args, c_key, bool(c_val))
+
     items = []
     g_stats, tags, x_stats, acls = {}, {}, {}, {}
     
     help_lines = [
         "Navigation:",
-        "  UP/DOWN      : Move cursor",
-        "  ENTER        : Open Directory or File",
+        "  UP/DOWN      : Move cursor line by line",
+        "  PgUp/PgDn    : Scroll directory list by page",
+        "  Home/End     : Jump to first or last entry",
+        "  ENTER        : Open Directory or File Viewer (with ASCII/EBCDIC/Hex)",
         "  ESC          : Go up one directory",
         "",
-        "File Operations:",
+        "File & z/OS Operations:",
         "  i            : Inspect full file info/metadata",
         "  e            : Edit file (vi, etc)",
-        "  D            : Delete file/dir",
-        "  R            : Rename file/dir",
-        "  C            : Copy file/dir",
+        "  m / A        : Create new directory (m) / new empty file (A)",
+        "  p            : Change permissions (chmod octal popup)",
+        "  u            : Change z/OS file tag (chtag popup)",
+        "  x            : Modify z/OS extended attributes (extattr popup)",
+        "  D / R / C    : Delete / Rename / Copy file or directory",
         "",
         "Sorting & Filtering:",
-        "  s            : Sort Size",
-        "  t            : Sort MTime (Modified)",
-        "  a            : Sort ATime (Accessed)",
-        "  C            : Sort CTime (Changed)",
-        "  n            : Sort Name",
-        "  r            : Reverse Sort",
-        "  f or /       : Filter by string",
-        "  c            : Clear filter",
+        "  s / t / a / z: Sort Size (s), MTime (t), ATime (a), CTime (z)",
+        "  n / r / d    : Sort Name (n), Reverse (r), Group Dirs First (d)",
+        "  .            : Toggle hidden dotfiles (-a)",
+        "  f or /       : Filter by string (c to clear)",
         "",
         "Column & View Toggles:",
         "  v            : Open interactive Columns Menu (Add/Remove any column)",
@@ -1337,15 +1705,18 @@ def tui_loop(stdscr, start_paths, args):
             except: pass
             
         if sort_by == 'size':
-            raw_files.sort(key=lambda x: (-x[1].st_size if not sort_rev else x[1].st_size))
+            raw_files.sort(key=lambda x: x[1].st_size, reverse=not sort_rev)
         elif sort_by == 'time':
-            raw_files.sort(key=lambda x: (-x[1].st_mtime if not sort_rev else x[1].st_mtime))
+            raw_files.sort(key=lambda x: x[1].st_mtime, reverse=not sort_rev)
         elif sort_by == 'atime':
-            raw_files.sort(key=lambda x: (-x[1].st_atime if not sort_rev else x[1].st_atime))
+            raw_files.sort(key=lambda x: x[1].st_atime, reverse=not sort_rev)
         elif sort_by == 'ctime':
-            raw_files.sort(key=lambda x: (-x[1].st_ctime if not sort_rev else x[1].st_ctime))
+            raw_files.sort(key=lambda x: x[1].st_ctime, reverse=not sort_rev)
         else:
-            raw_files.sort(key=lambda x: (x[0].lower() if not sort_rev else -ord(x[0][0])))
+            raw_files.sort(key=lambda x: x[0].lower(), reverse=sort_rev)
+
+        if getattr(args, 'group_directories_first', False):
+            raw_files.sort(key=lambda x: 0 if stat.S_ISDIR(x[1].st_mode) else 1)
             
         if sort_rev and sort_by == 'name':
             items = raw_files + dots
@@ -1366,7 +1737,7 @@ def tui_loop(stdscr, start_paths, args):
             c_dsn = get_zfs_dsn(current_dir)
             if c_dsn: hdr += f" [{c_dsn}]"
         
-        hdr += f" | Sort: {sort_by.upper()}{' (Rev)' if sort_rev else ''}"
+        hdr += f" | Sort: {sort_by.upper()}{' (Rev)' if sort_rev else ''}{' [Dirs1st]' if getattr(args, 'group_directories_first', False) else ''}"
         if current_filter or (explicit_files and current_dir == initial_dir): 
             f_str = current_filter if current_filter else "[Explicit Glob]"
             hdr += f" | Flt: '{f_str}'"
@@ -1374,39 +1745,43 @@ def tui_loop(stdscr, start_paths, args):
         
         col_hdr = get_header_str(args, force_long=True)
         stdscr.addstr(1, 0, col_hdr[:w-1].ljust(w-1), curses.A_BOLD)
-        stdscr.addstr(2, 0, "\u2500" * (w-1), curses.A_NORMAL)
+        try:
+            stdscr.hline(2, 0, curses.ACS_HLINE, w - 1)
+        except curses.error:
+            stdscr.addstr(2, 0, "-" * (w - 1), curses.A_NORMAL)
         
-        for i in range(list_h):
-            if top_idx + i < len(items):
-                entry, st, path = items[top_idx + i]
-                if not st: 
-                    stdscr.addstr(i + 3, 0, entry, curses.A_NORMAL)
-                    continue
-                    
-                ansi_str, _ = format_entry(
-                    entry, st, path, entry, g_stats, tags, x_stats, acls, args, force_long=True
-                )
-                addstr_ansi(stdscr, i + 3, 0, ansi_str, (top_idx + i == sel_idx), w)
+        last_tui_dsn = None
+        for idx_all in range(top_idx + list_h):
+            if idx_all >= len(items):
+                break
+            entry, st, path = items[idx_all]
+            disp_dsn = ""
+            if st and args.dsn:
+                cur_dsn = get_zfs_dsn(path)
+                if cur_dsn and cur_dsn != last_tui_dsn:
+                    disp_dsn = cur_dsn
+                    last_tui_dsn = cur_dsn
+            if idx_all < top_idx:
+                continue
+            i = idx_all - top_idx
+            if not st:
+                stdscr.addstr(i + 3, 0, entry, curses.A_NORMAL)
+                continue
+            ansi_str, _ = format_entry(
+                entry, st, path, entry, g_stats, tags, x_stats, acls, args,
+                force_long=True, show_dsn=disp_dsn
+            )
+            addstr_ansi(stdscr, i + 3, 0, ansi_str, (idx_all == sel_idx), w)
                 
-        ftr = " q:Quit i:Info v:Cols o:Opt D,R,C:Ops s,t,a,C,n,r:Srt f,c:Flt F1:Help "
+        ftr = " q:Quit i:Info v:Cols p,u,x:Attr m,A,D,R,C:Ops .:Dot d:Dirs F1:Help "
         stdscr.addstr(h - 1, 0, ftr.ljust(w-1)[:w-1], curses.A_REVERSE)
         
-        stdscr.nodelay(True)
         k = stdscr.getch()
-        stdscr.nodelay(False)
-        
-        if k == -1: k = stdscr.getch()
-            
-        if k == 27: 
-            stdscr.nodelay(True)
-            k2 = stdscr.getch()
-            stdscr.nodelay(False)
-            if k2 == -1: 
-                if current_dir != '/':
-                    current_dir = os.path.dirname(current_dir)
-                    current_filter = ""
-                    prev_dir = None
-            else: curses.ungetch(k2)
+        if k == 27:
+            if current_dir != '/':
+                current_dir = os.path.dirname(current_dir)
+                current_filter = ""
+                prev_dir = None
                 
         elif k == curses.KEY_F1:
             show_help(stdscr, "Browser", help_lines)
@@ -1414,15 +1789,70 @@ def tui_loop(stdscr, start_paths, args):
         elif k == ord('q'): break
         elif k == curses.KEY_UP: sel_idx -= 1
         elif k == curses.KEY_DOWN: sel_idx += 1
+        elif k == curses.KEY_PPAGE: sel_idx = max(0, sel_idx - list_h)
+        elif k == curses.KEY_NPAGE: sel_idx = min(len(items) - 1, sel_idx + list_h)
+        elif k == curses.KEY_HOME: sel_idx = 0
+        elif k == curses.KEY_END: sel_idx = len(items) - 1
+        elif k == ord('.'):
+            args.all = not args.all
+            prev_dir = None
+        elif k == ord('d'):
+            args.group_directories_first = not getattr(args, 'group_directories_first', False)
         elif k == ord('s'): sort_by = 'size'
         elif k == ord('t'): sort_by = 'time'; args.access = False; args.ctime = False
         elif k == ord('a'): sort_by = 'atime'; args.access = True; args.ctime = False
-        elif k == ord('C'): sort_by = 'ctime'; args.access = False; args.ctime = True
+        elif k == ord('z'): sort_by = 'ctime'; args.access = False; args.ctime = True
         elif k == ord('n'): sort_by = 'name'
         elif k == ord('r'): sort_rev = not sort_rev
+        elif k == ord('m'):
+            new_d = popup_input(stdscr, "Create Directory (mkdir)", "New directory name:")
+            if new_d:
+                try:
+                    os.makedirs(os.path.join(current_dir, new_d), exist_ok=False)
+                    popup_message(stdscr, "Directory Created", f"Created directory '{new_d}'", is_error=False)
+                    prev_dir = None
+                except Exception as e:
+                    popup_message(stdscr, "mkdir Error", str(e), is_error=True)
+        elif k == ord('A'):
+            new_f = popup_input(stdscr, "Create New File", "New file name:")
+            if new_f:
+                target_f = os.path.join(current_dir, new_f)
+                if os.path.exists(target_f):
+                    popup_message(stdscr, "File Exists", f"'{new_f}' already exists", is_error=True)
+                else:
+                    try:
+                        with open(target_f, 'a'):
+                            pass
+                        popup_message(stdscr, "File Created", f"Created empty file '{new_f}'", is_error=False)
+                        prev_dir = None
+                    except Exception as e:
+                        popup_message(stdscr, "Create Error", str(e), is_error=True)
+        elif k == ord('p'):
+            sel = items[sel_idx]
+            if sel[1] and sel[0] != '..':
+                cur_oct = oct(sel[1].st_mode)[-4:]
+                new_oct = popup_input(stdscr, "Change Permissions (chmod)", f"Octal mode for '{sel[0]}':", default=cur_oct)
+                if new_oct and new_oct != cur_oct:
+                    try:
+                        mode_int = int(new_oct, 8)
+                        os.chmod(sel[2], mode_int)
+                        popup_message(stdscr, "chmod Complete", f"Set permissions of '{sel[0]}' to {new_oct}", is_error=False)
+                        prev_dir = None
+                    except Exception as e:
+                        popup_message(stdscr, "chmod Error", str(e), is_error=True)
+        elif k == ord('u'):
+            sel = items[sel_idx]
+            if sel[1] and sel[0] != '..':
+                if popup_chtag(stdscr, sel[0], sel[2], use_tui_color):
+                    prev_dir = None
+        elif k == ord('x'):
+            sel = items[sel_idx]
+            if sel[1] and sel[0] != '..':
+                if popup_extattr(stdscr, sel[0], sel[2], x_stats.get(sel[0]), use_tui_color):
+                    prev_dir = None
         elif k == ord('v') or k == ord('V'):
             prev_g, prev_t, prev_x = args.git, args.tags, args.extattr
-            popup_columns(stdscr, args, use_tui_color)
+            popup_columns(stdscr, args, config, use_tui_color)
             if (args.git and not prev_g) or (args.tags and not prev_t) or (args.extattr and not prev_x):
                 prev_dir = None
         elif k == ord('I'): args.inode = not args.inode
@@ -1455,6 +1885,7 @@ def tui_loop(stdscr, start_paths, args):
                     try:
                         if stat.S_ISDIR(sel[1].st_mode): shutil.rmtree(sel[2])
                         else: os.remove(sel[2])
+                        popup_message(stdscr, "Delete Complete", f"Deleted {kind} '{sel[0]}'", is_error=False)
                         prev_dir = None
                     except Exception as e:
                         popup_message(stdscr, "Delete Error", str(e), is_error=True)
@@ -1465,6 +1896,7 @@ def tui_loop(stdscr, start_paths, args):
                 if new_n and new_n != sel[0]:
                     try:
                         os.rename(sel[2], os.path.join(current_dir, new_n))
+                        popup_message(stdscr, "Rename Complete", f"Renamed '{sel[0]}' to '{new_n}'", is_error=False)
                         prev_dir = None
                     except Exception as e:
                         popup_message(stdscr, "Rename Error", str(e), is_error=True)
@@ -1477,6 +1909,7 @@ def tui_loop(stdscr, start_paths, args):
                         dst = os.path.join(current_dir, new_n)
                         if stat.S_ISDIR(sel[1].st_mode): shutil.copytree(sel[2], dst)
                         else: shutil.copy2(sel[2], dst)
+                        popup_message(stdscr, "Copy Complete", f"Copied '{sel[0]}' to '{new_n}'", is_error=False)
                         prev_dir = None
                     except Exception as e:
                         popup_message(stdscr, "Copy Error", str(e), is_error=True)
@@ -1488,6 +1921,7 @@ def tui_loop(stdscr, start_paths, args):
                 if use_tui_color:
                     apply_curses_colors(config)
                     sync_ansi_colors(config)
+                popup_message(stdscr, "Settings Saved", "Saved editor & colors to ~/.pyeza.json", is_error=False)
                 prev_dir = None 
         elif k == ord('i'):
             sel = items[sel_idx]
@@ -1537,7 +1971,11 @@ def main():
     parser.add_argument('-R', '--regex', metavar='PATTERN')
     parser.add_argument('-T', '--tags', action='store_true')
     parser.add_argument('-x', '--extattr', action='store_true')
-    parser.add_argument('--tree', action='store_true')
+    parser.add_argument('--tree', action='store_true', help="Display recursive directory tree")
+    parser.add_argument('-L', '--level', type=int, metavar='DEPTH',
+                        help="Limit recursion depth of --tree")
+    parser.add_argument('--group-directories-first', action='store_true',
+                        help="List directories before regular files")
     parser.add_argument('-d', '--directory', action='store_true')
     parser.add_argument('-S', '--sort-size', action='store_true')
     parser.add_argument('-r', '--reverse', action='store_true')
@@ -1565,6 +2003,7 @@ def main():
         disable_ansi_colors()
     
     if args.tui:
+        os.environ.setdefault('ESCDELAY', '25')
         curses.wrapper(tui_loop, args.paths, args)
         return
     
@@ -1593,6 +2032,7 @@ def main():
 
     if file_paths:
         short_items = []
+        prev_file_dsn = None
         path_dict = {"target": "files", "contents": []}
         
         if args.long or args.tree or args.oneline:
@@ -1630,8 +2070,14 @@ def main():
                         if len(parts) >= 5: x_stat[path] = parts[:4]
                     except Exception: pass
                 
+                disp_dsn = ""
+                if args.dsn:
+                    cur_dsn = get_zfs_dsn(path)
+                    if cur_dsn and cur_dsn != prev_file_dsn:
+                        disp_dsn = cur_dsn
+                        prev_file_dsn = cur_dsn
                 fmt_str, vlen = format_entry(
-                    path, st, path, path, {}, t_stat, x_stat, acls, args
+                    path, st, path, path, {}, t_stat, x_stat, acls, args, show_dsn=disp_dsn
                 )
                 
                 if args.long or args.tree or args.oneline:
@@ -1692,4 +2138,3 @@ if __name__ == '__main__':
         main()
     except KeyboardInterrupt:
         sys.exit(130)
-
